@@ -1,4 +1,7 @@
 {
+  "buildCommand": "",
+  "outputDirectory": "",
+  "installCommand": "",
   "functions": {
     "api/match.js": {
       "runtime": "@vercel/node@3",
