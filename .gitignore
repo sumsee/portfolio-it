@@ -3,3 +3,5 @@ node_modules
 .claude
 npx-cache
 npm-cache
+.vercel
+.env*.local
