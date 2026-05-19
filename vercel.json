@@ -3,8 +3,7 @@
     "api/match.js": {
       "runtime": "@vercel/node@3",
       "maxDuration": 60,
-      "memory": 512,
-      "includeFiles": "api/**"
+      "memory": 512
     }
   },
   "rewrites": [
@@ -19,8 +18,5 @@
         { "key": "Access-Control-Allow-Headers", "value": "Content-Type" }
       ]
     }
-  ],
-  "env": {
-    "DEEPSEEK_API_KEY": "@deepseek-api-key"
-  }
+  ]
 }
