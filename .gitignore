@@ -1,0 +1,5 @@
+.env
+node_modules
+.claude
+npx-cache
+npm-cache

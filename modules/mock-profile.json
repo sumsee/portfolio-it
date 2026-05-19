@@ -1,0 +1,123 @@
+{
+  "matchScore": 88,
+  "summary": "候选人与岗位高度匹配。两段国家护网蓝队实战经验、EDR/天眼/天融信等安全设备操作经验与岗位要求高度吻合；软考中级+ NISP二级双证加持，专业基础扎实。唯一短板是缺少甲方安全设备管理经验，但蓝队视角的攻防实战能力可快速转化。",
+  "highlights": [
+    {
+      "skill": "国家护网蓝队实战经验（2段）",
+      "relevance": "high",
+      "reason": "岗位要求安全监控与应急响应经验，候选人在护网行动中直接负责告警研判与攻击处置"
+    },
+    {
+      "skill": "Wireshark 深度包检测（15000+条）",
+      "relevance": "high",
+      "reason": "岗位核心职责包含流量分析与异常检测，候选人具备大规模实战分析经验"
+    },
+    {
+      "skill": "EDR 主机监控与应急响应",
+      "relevance": "high",
+      "reason": "岗位明确要求终端安全监控能力，候选人熟练使用天融信 EDR 完成病毒分析与溯源"
+    },
+    {
+      "skill": "等保2.0 与安全合规",
+      "relevance": "medium",
+      "reason": "岗位要求了解等保测评流程，候选人深入理解等保2.0标准体系"
+    },
+    {
+      "skill": "漏洞扫描与修复（AWVS/Nessus）",
+      "relevance": "high",
+      "reason": "岗位要求漏洞管理能力，候选人具备7个关键漏洞（含CVE）修复实战经验"
+    }
+  ],
+  "suggestions": [
+    "补充甲方安全设备管理或安全运营平台运营经验描述",
+    "增加 Python 安全自动化脚本的具体案例，体现代码能力",
+    "在简历中突出安全分析与报告输出能力，匹配岗位的文档要求"
+  ],
+  "missingSkills": [
+    "甲方安全设备运维管理经验",
+    "SIEM/SOAR 平台使用经验",
+    "云安全（AWS/阿里云）基础知识"
+  ],
+  "tailoredContent": {
+    "hero": {
+      "name": "吴友虎",
+      "tags": [
+        { "text": "护网蓝队", "type": "highlight" },
+        { "text": "软考中级", "type": "cert" },
+        { "text": "NISP二级", "type": "cert" },
+        { "text": "EDR应急响应", "type": "skill" }
+      ],
+      "subtitle": "网络安全运营工程师 · 两段护网蓝队实战 · 流量分析与应急响应专家"
+    },
+    "sections": [
+      {
+        "id": "experience",
+        "icon": "⚡",
+        "title": "实战经验",
+        "subtitle": "2段国家护网蓝队经历 / 安全监控与应急响应",
+        "priority": 1,
+        "items": [
+          {
+            "title": "国家护网行动 — 中国联通（监控研判岗）2025.08-2025.12",
+            "content": "<ul class=\"modal-list\"><li><strong>主机研判</strong>：依托天融信EDR平台实时监控客户终端主机行为日志，结合Windows事件日志与进程行为分析，成功研判钓鱼邮件<span class=\"highlight\">50+</span>、EDR告警<span class=\"highlight\">100+</span>，输出攻击溯源报告</li><li><strong>情报处置</strong>：累计将<span class=\"highlight\">500+</span>恶意样本MD5/SHA256哈希值同步至EDR IP协议控制及威胁情报模块，实现对同类恶意攻击的自动化实时拦截</li><li><strong>应急响应</strong>：对中毒主机开展应急响应，使用Process Monitor、火绒剑完成病毒样本提取与静态/动态行为分析，清除远控木马/挖矿程序等恶意程序</li></ul>"
+          },
+          {
+            "title": "国家护网行动 — 中华保险（安全监控岗）2023.07-2023.08",
+            "content": "<ul class=\"modal-list\"><li>参与<strong>亚信科技</strong>外包驻场护网行动，综合运用亚信防毒墙、亚信DS、奇安信天眼、邮件网关等安全设备</li><li><strong>告警研判</strong>：针对奇安信天眼平台及态势感知系统告警，结合BurpSuite辅助验证，识别SQL注入、文件上传、XSS等OWASP TOP10攻击类型，累计处置告警<span class=\"highlight\">200+</span>例</li><li><strong>应急响应</strong>：根据研判结果通过防火墙ACL策略阻断攻击链条，对异常HTTP/HTTPS流量进行封堵，封禁攻击IP<span class=\"highlight\">100+</span>个</li><li><strong>流量分析</strong>：使用Wireshark对交换机镜像流量进行深度包检测，处置分析攻击及异常流量<span class=\"highlight\">15000+</span>条，查杀办公终端300余台</li></ul>"
+          },
+          {
+            "title": "广东环境保护工程职业学院 — 网络运维实习工程师 2024.08-2024.12",
+            "content": "<ul class=\"modal-list\"><li><strong>网络巡检</strong>：每日使用Nmap对校园网络节点进行例行扫描与巡检，排查H3C交换机端口配置异常、路由器ACL规则错误等问题</li><li><strong>漏洞修复</strong>：使用AWVS、Nessus对校园服务器及Web系统实施授权漏洞扫描，完成<span class=\"highlight\">7个</span>关键安全漏洞修复，含Apache远程代码执行漏洞（CVE-2021-44790），输出整改建议文档并跟踪修复闭环</li></ul>"
+          }
+        ]
+      },
+      {
+        "id": "skills",
+        "icon": "🛡️",
+        "title": "专业技能",
+        "subtitle": "流量分析 / 漏洞检测 / 应急响应 / 等保2.0",
+        "priority": 2,
+        "items": [
+          {
+            "title": "安全监控与应急响应",
+            "content": "<ul class=\"modal-list\"><li><strong>流量分析</strong>：精通Wireshark深度包检测，具备<span class=\"highlight\">15000+</span>条攻击及异常流量分析实战经验，熟悉HTTP/HTTPS、TCP/IP协议栈</li><li><strong>安全设备</strong>：熟练操作奇安信天眼、天融信EDR、亚信防毒墙/DS、态势感知平台、防火墙、WAF等安全设备</li><li><strong>应急响应</strong>：具备EDR主机行为监控与分析能力，熟练使用Process Monitor、火绒剑完成病毒样本提取与行为分析，具备攻击溯源报告输出能力</li></ul>"
+          },
+          {
+            "title": "漏洞检测与渗透测试",
+            "content": "<ul class=\"modal-list\"><li><strong>漏洞扫描</strong>：熟练使用AWVS、Nessus、BurpSuite进行Web漏洞扫描与验证，掌握OWASP TOP10攻击与防御技术</li><li><strong>渗透测试</strong>：具备渗透测试基础能力，熟悉SQL注入、文件上传、XSS等常见攻击手法</li><li><strong>网络设备</strong>：熟悉防火墙、交换机、路由器、WAF等网络设备，掌握ACL策略配置与Nmap网络巡检</li></ul>"
+          }
+        ]
+      },
+      {
+        "id": "education",
+        "icon": "🎓",
+        "title": "教育与荣誉",
+        "subtitle": "广东技术师范大学 · 网络空间安全 · GPA 3.78/5.00",
+        "priority": 3,
+        "items": [
+          {
+            "title": "教育背景",
+            "content": "<ul class=\"modal-list\"><li><strong>院校</strong>：广东技术师范大学</li><li><strong>专业</strong>：网络空间安全（本科）&nbsp;&nbsp;2021.09 - 2025.07</li><li><strong>GPA</strong>：<span class=\"highlight\">3.78 / 5.00</span>&nbsp;&nbsp;&nbsp;专业排名前10%</li><li><strong>主修课程</strong>：计算机网络（98）| 网络安全技术（93）| 数据结构与算法（91）| 计算机组成原理（90）| Python程序设计（89）| 可信计算与等级保护（89）| 网络攻击与防御（89）| 密码学（87）</li></ul>"
+          },
+          {
+            "title": "荣誉奖项（17项）",
+            "content": "<ul class=\"modal-list\"><li><span class=\"success\">🏆</span> 全国大学生信息安全竞赛（CISCN）华南赛区<strong>46名</strong></li><li><span class=\"success\">🏆</span> 第十七届挑战杯全国大学生课外学术科技作品竞赛<strong>校级银奖</strong></li><li><span class=\"success\">🏆</span> 省级<strong>蓝桥杯C语言三等奖</strong></li><li><span class=\"success\">🏆</span> 连续三年校级奖学金（三好学生 / 品德积极分子 / 文体积极分子）</li><li>累计获得校级及以上奖项、荣誉称号<strong>17项</strong></li></ul>"
+          }
+        ]
+      },
+      {
+        "id": "quality",
+        "icon": "💡",
+        "title": "证书与资质",
+        "subtitle": "软考中级 / NISP二级 / CNVD漏洞证书 / 教师资格证",
+        "priority": 4,
+        "items": [
+          {
+            "title": "专业证书",
+            "content": "<ul class=\"modal-list\"><li>持有<strong>信息安全工程师（软考中级）</strong>证书</li><li>持有<strong>NISP二级证书</strong>（CISP方向）</li><li>持有<strong>CNVD事件型漏洞证书</strong>，漏洞盒子累计积分<span class=\"highlight\">500+</span></li><li>持有<strong>计算机网络技术教师资格证</strong></li><li>大学英语<strong>CET-4</strong>，具备专业文献阅读能力</li></ul>"
+          }
+        ]
+      }
+    ]
+  }
+}
