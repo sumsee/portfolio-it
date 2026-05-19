@@ -2,13 +2,6 @@
   "buildCommand": "",
   "outputDirectory": "",
   "installCommand": "",
-  "functions": {
-    "api/match.js": {
-      "runtime": "@vercel/node@3",
-      "maxDuration": 60,
-      "memory": 512
-    }
-  },
   "rewrites": [
     { "source": "/api/match", "destination": "/api/match" }
   ],
