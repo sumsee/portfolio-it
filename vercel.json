@@ -1,7 +1,7 @@
 {
   "functions": {
     "api/match.js": {
-      "runtime": "nodejs20.x",
+      "runtime": "@vercel/node@3",
       "maxDuration": 60,
       "memory": 512,
       "includeFiles": "api/**"
