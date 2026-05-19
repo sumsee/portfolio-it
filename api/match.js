@@ -1,85 +1,121 @@
 /**
- * Serverless API 代理 — 简历-JD 匹配分析
+ * Serverless API 代理 — 简历-JD 匹配分析 & 岗位定制个人展示页生成
  *
- * 部署到 Vercel Functions / Netlify Functions 时自动识别为 serverless endpoint。
- * 仅从环境变量 DEEPSEEK_API_KEY 读取 API Key，绝不硬编码或暴露给前端。
+ * 部署到 Vercel Functions 时自动识别为 serverless endpoint。
+ * 仅从环境变量 DEEPSEEK_API_KEY 读取 API Key。
  *
  * POST /api/match
  * Body: { resumeData: object, jdText: string }
- * Response: GeneratedProfile JSON
+ * Response: 个人展示页结构化 JSON
  */
 
-// DeepSeek API 端点 (OpenAI 兼容格式)
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
 const MODEL = 'deepseek-chat';
 
 /**
- * 构建 system prompt — 定义 AI 角色和输出 schema
+ * 构建 system prompt — 定义 AI 角色、输出 schema、分析维度
  */
 function buildSystemPrompt() {
-    return `你是一位资深 HR + 技术面试官，专精网络安全领域。你的任务是分析候选人简历与岗位 JD 的匹配度，并生成定制化的个人展示页内容。
+    return `你是一位资深 HRBP + 招聘经理，专精网络安全与信息技术岗位的人才评估。
+你的任务是对比候选人简历与目标岗位 JD，生成一份「岗位定制个人展示页」结构化 JSON。
 
 ## 输出要求
 
-你必须**只返回合法 JSON**，不要包含任何其他文字、markdown 标记或代码块包裹。JSON 结构如下：
+你必须**只返回合法 JSON**，不要包含任何其他文字、markdown 标记或代码块包裹。
+
+## JSON Schema
 
 {
-  "matchScore": number,        // 0-100 综合匹配度评分
-  "summary": string,           // 1-2句话匹配总结（中文）
-  "highlights": [
-    {
-      "skill": string,         // 匹配的技能/经验名称
-      "relevance": "high" | "medium",
-      "reason": string         // 为什么该技能与 JD 相关（简短）
-    }
-  ],
-  "suggestions": string[],     // 3-5条简历改进建议（中文）
-  "missingSkills": string[],   // JD 要求但候选人明显缺失的关键技能
-  "tailoredContent": {
-    "hero": {
-      "name": string,          // 候选人姓名
-      "tags": [                // 标签，根据 JD 精选最相关的
-        { "text": string, "type": "cert" | "skill" | "highlight" }
-      ],
-      "subtitle": string       // 针对 JD 定制的1句话定位语
-    },
-    "sections": [              // 模块列表，按 JD 相关性排序
+  "hero": {
+    "title": "面向【岗位名称】的候选人",
+    "positioning": "一句话职业定位，融合 JD 核心关键词",
+    "tags": ["核心标签1", "核心标签2", "核心标签3", "核心标签4", "核心标签5"],
+    "summary": "2-3句话说明候选人为什么适合这个岗位，点明最核心的匹配逻辑"
+  },
+  "matchSummary": {
+    "overallConclusion": "综合匹配总体结论，2-3句话",
+    "strongestMatches": ["最强匹配点1（具体到技能/经验+对应JD要求）", "最强匹配点2"],
+    "riskOrGaps": ["潜在风险或差距1", "潜在风险或差距2"]
+  },
+  "abilityQualificationMatch": {
+    "conclusion": "能力资历维度匹配结论，1-2句话",
+    "evidence": [
       {
-        "id": string,          // "experience" | "skills" | "education" | "quality"
-        "icon": string,        // 1个 emoji
-        "title": string,       // 模块标题
-        "subtitle": string,    // JD 定制副标题
-        "priority": number,    // 排序权重，数字越小越靠前
-        "items": [
-          {
-            "title": string,
-            "content": string  // HTML 片段，使用现有 class：modal-list, highlight, success
-          }
-        ]
+        "title": "证据项标题",
+        "optimizedDescription": "面向JD优化后的描述文案",
+        "highlightedSkills": ["突出的能力关键词"],
+        "matchedJDRequirements": ["对应的JD具体要求"],
+        "improvementSuggestions": ["可进一步强化的建议"]
       }
     ]
-  }
+  },
+  "visionPlanningMatch": {
+    "conclusion": "理念规划维度匹配结论，1-2句话",
+    "evidence": [
+      {
+        "title": "证据项标题",
+        "optimizedDescription": "面向JD优化后的描述文案",
+        "highlightedSkills": ["突出的理念/规划关键词"],
+        "matchedJDRequirements": ["对应的JD具体要求"],
+        "improvementSuggestions": ["可进一步强化的建议"]
+      }
+    ]
+  },
+  "statusFitMatch": {
+    "conclusion": "状态适配维度匹配结论，1-2句话",
+    "evidence": [
+      {
+        "title": "证据项标题",
+        "optimizedDescription": "面向JD优化后的描述文案",
+        "highlightedSkills": ["突出的状态/适配关键词"],
+        "matchedJDRequirements": ["对应的JD具体要求"],
+        "improvementSuggestions": ["可进一步强化的建议"]
+      }
+    ]
+  },
+  "qualityCharacterMatch": {
+    "conclusion": "素养性格维度匹配结论，1-2句话",
+    "evidence": [
+      {
+        "title": "证据项标题",
+        "optimizedDescription": "面向JD优化后的描述文案",
+        "highlightedSkills": ["突出的素养/性格关键词"],
+        "matchedJDRequirements": ["对应的JD具体要求"],
+        "improvementSuggestions": ["可进一步强化的建议"]
+      }
+    ]
+  },
+  "experienceShowcase": [
+    {
+      "name": "经历名称（原始经历标题）",
+      "optimizedDescription": "面向JD定制优化的经历描述，突出与JD相关的成果和能力",
+      "highlightedSkills": ["该段经历体现的核心能力"],
+      "matchedJDRequirements": ["这段经历对应的JD要求"],
+      "improvementSuggestions": ["面试中可进一步补充的方向"]
+    }
+  ],
+  "interviewHighlights": ["面试中应重点展示的亮点1", "面试中应重点展示的亮点2", "面试中应重点展示的亮点3"],
+  "missingInfoSuggestions": ["简历中缺失但JD关注的信息，建议补充1", "建议补充2"],
+  "finalSelfIntroduction": "基于以上分析，生成一段可直接用于面试的自我介绍全文（200-350字），开头问候，中间结合JD要求逐条展示匹配点，结尾表达意愿"
 }
 
-## 分析维度
+## 四个匹配维度说明
 
-1. **技能匹配**：逐条对比简历技能与 JD 要求，标注匹配程度
-2. **经验相关度**：判断候选人项目/实习/工作经历是否契合 JD 场景
-3. **缺失识别**：诚实列出 JD 中候选人明显不具备的关键要求
-4. **内容定制**：重新组织简历内容，将与 JD 最相关的模块、经验、技能前置突出
+1. **能力资历匹配 (abilityQualificationMatch)**：技能、证书、学历、工作经验与 JD 硬性要求的匹配度
+2. **理念规划匹配 (visionPlanningMatch)**：职业规划、行业认知、项目方向与 JD 岗位发展方向的一致性
+3. **状态适配匹配 (statusFitMatch)**：工作地点、薪资预期、到岗时间、工作模式等客观条件适配度
+4. **素养性格匹配 (qualityCharacterMatch)**：软技能、性格特质、团队协作、沟通表达等素质维度匹配度
 
-## 定制原则
+## 分析 & 写作原则
 
-- hero.subtitle 必须融入 JD 中目标岗位的关键词
-- hero.tags 选取与 JD 最匹配的3-5个标签
-- sections 按与 JD 的相关性从高到低排列
-- 每个 section 的 items 也应筛选/重排：与 JD 无关的内容可弱化或放后面
-- content 中的 HTML 使用以下 class：
-  - <ul class="modal-list"> 列表容器
-  - <strong> 加粗关键词
-  - <span class="highlight"> 高亮数字/亮点
-  - <span class="success"> 成功/正面标记
-- 所有文案使用中文`;
+- **事实保真**：不编造技能、经历、数据。信息不足时用「待确认」「建议补充」标注
+- **表达优化**：在事实不变前提下，用更专业、更贴合 JD 的语言重新组织描述
+- **关键词对齐**：主动对齐 JD 中的术语和关键词，但不要生硬堆砌
+- **诚实标注**：候选人明显不具备的 JD 要求，在 riskOrGaps 中诚实列出
+- **语言风格**：专业可信、简洁有力、中文输出
+- **evidence 数量**：每个维度 1-3 条 evidence，宁缺毋滥
+- **experienceShowcase**：选取与 JD 最相关的 2-5 段经历，按相关性降序排列
+- **tags**：从技能、证书、经历、特质中提取 5 个最有 JD 区分度的标签`;
 }
 
 /**
@@ -92,11 +128,15 @@ function buildUserPrompt(resumeData, jdText) {
 ${JSON.stringify(resumeData, null, 2)}
 \`\`\`
 
-## 岗位 JD
+## 目标岗位 JD
 
 ${jdText}
 
-请根据以上信息，输出匹配分析 JSON。`;
+## 任务
+
+请根据以上简历和 JD，生成「岗位定制个人展示页」JSON。
+严格遵循 system prompt 中定义的 JSON Schema。
+对于简历中缺乏的信息（如职业规划、薪资期望等状态类信息），在对应维度标注「待确认」或合理推断后给出建议。`;
 }
 
 /**
@@ -111,7 +151,7 @@ async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey) {
         },
         body: JSON.stringify({
             model: MODEL,
-            max_tokens: 4096,
+            max_tokens: 8192,
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt },
@@ -130,7 +170,6 @@ async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey) {
 
 /**
  * 从 AI 响应文本中提取 JSON
- * 兼容模型可能包裹 markdown 代码块的情况
  */
 function extractJSON(text) {
     // 尝试匹配 ```json ... ``` 代码块
@@ -151,33 +190,66 @@ function extractJSON(text) {
 }
 
 /**
- * 校验 GeneratedProfile 结构完整性
+ * 校验生成结果结构完整性
  */
 function validateProfile(profile) {
     const errors = [];
 
-    if (typeof profile.matchScore !== 'number' || profile.matchScore < 0 || profile.matchScore > 100) {
-        errors.push('matchScore 必须是 0-100 的数字');
+    // hero
+    if (!profile.hero || typeof profile.hero.title !== 'string' || !profile.hero.title.trim()) {
+        errors.push('hero.title 必须是非空字符串');
     }
-    if (typeof profile.summary !== 'string' || !profile.summary.trim()) {
-        errors.push('summary 不能为空');
+    if (!profile.hero || typeof profile.hero.positioning !== 'string' || !profile.hero.positioning.trim()) {
+        errors.push('hero.positioning 必须是非空字符串');
     }
-    if (!Array.isArray(profile.highlights)) {
-        errors.push('highlights 必须是数组');
+    if (!Array.isArray(profile.hero?.tags) || profile.hero.tags.length === 0) {
+        errors.push('hero.tags 必须是非空数组');
     }
-    if (!Array.isArray(profile.suggestions)) {
-        errors.push('suggestions 必须是数组');
-    }
-    if (!Array.isArray(profile.missingSkills)) {
-        errors.push('missingSkills 必须是数组');
+    if (!profile.hero || typeof profile.hero.summary !== 'string' || !profile.hero.summary.trim()) {
+        errors.push('hero.summary 必须是非空字符串');
     }
 
-    const tc = profile.tailoredContent;
-    if (!tc || !tc.hero || typeof tc.hero.name !== 'string') {
-        errors.push('tailoredContent.hero.name 必须是非空字符串');
+    // matchSummary
+    if (!profile.matchSummary || typeof profile.matchSummary.overallConclusion !== 'string') {
+        errors.push('matchSummary.overallConclusion 必须是非空字符串');
     }
-    if (!tc || !Array.isArray(tc.sections)) {
-        errors.push('tailoredContent.sections 必须是数组');
+    if (!Array.isArray(profile.matchSummary?.strongestMatches)) {
+        errors.push('matchSummary.strongestMatches 必须是数组');
+    }
+    if (!Array.isArray(profile.matchSummary?.riskOrGaps)) {
+        errors.push('matchSummary.riskOrGaps 必须是数组');
+    }
+
+    // 四个匹配维度
+    const dimensions = ['abilityQualificationMatch', 'visionPlanningMatch', 'statusFitMatch', 'qualityCharacterMatch'];
+    for (const dim of dimensions) {
+        const d = profile[dim];
+        if (!d || typeof d.conclusion !== 'string') {
+            errors.push(`${dim}.conclusion 必须是非空字符串`);
+        }
+        if (!Array.isArray(d?.evidence)) {
+            errors.push(`${dim}.evidence 必须是数组`);
+        }
+    }
+
+    // experienceShowcase
+    if (!Array.isArray(profile.experienceShowcase)) {
+        errors.push('experienceShowcase 必须是数组');
+    }
+
+    // interviewHighlights
+    if (!Array.isArray(profile.interviewHighlights)) {
+        errors.push('interviewHighlights 必须是数组');
+    }
+
+    // missingInfoSuggestions
+    if (!Array.isArray(profile.missingInfoSuggestions)) {
+        errors.push('missingInfoSuggestions 必须是数组');
+    }
+
+    // finalSelfIntroduction
+    if (typeof profile.finalSelfIntroduction !== 'string' || !profile.finalSelfIntroduction.trim()) {
+        errors.push('finalSelfIntroduction 必须是非空字符串');
     }
 
     return errors;
@@ -222,13 +294,13 @@ export default async function handler(req, res) {
         });
     }
 
-    // 4. 调用 DeepSeek API
+    // 4. 核心流程
     try {
         const systemPrompt = buildSystemPrompt();
         const userPrompt = buildUserPrompt(resumeData, jdText.trim());
         const rawResponse = await callDeepSeekAPI(systemPrompt, userPrompt, apiKey);
 
-        // 5. 解析 JSON
+        // 5. 解析 JSON（含容错）
         let profile;
         try {
             profile = extractJSON(rawResponse);
@@ -237,6 +309,7 @@ export default async function handler(req, res) {
             return res.status(502).json({
                 error: 'AI Response Parse Error',
                 message: 'AI 返回内容格式异常，请重试',
+                errorMessage: parseErr.message,
             });
         }
 
@@ -248,25 +321,27 @@ export default async function handler(req, res) {
                 error: 'AI Response Validation Error',
                 message: 'AI 返回内容缺少必要字段，请重试',
                 details: validationErrors,
+                errorMessage: validationErrors.join('; '),
             });
         }
 
-        // 7. 返回匹配结果
+        // 7. 返回结果
         return res.status(200).json(profile);
     } catch (err) {
         console.error('DeepSeek API 调用失败:', err.message);
 
-        // 区分认证错误
         if (err.message.includes('401') || err.message.includes('403')) {
             return res.status(500).json({
                 error: 'Authentication Error',
                 message: 'API Key 无效或已过期，请联系管理员更新',
+                errorMessage: err.message,
             });
         }
 
         return res.status(502).json({
             error: 'AI Service Error',
             message: 'AI 服务暂时不可用，请稍后重试',
+            errorMessage: err.message,
         });
     }
 }

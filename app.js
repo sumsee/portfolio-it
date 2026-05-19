@@ -1,5 +1,5 @@
 // app.js — 工具主控逻辑
-// 串联 上传→解析→匹配→生成→预览→下载 完整流程
+// 串联 上传→解析→匹配→渲染 完整流程
 
 import { parseResumeFile } from './modules/parser.js';
 import { defaultResumeData } from './modules/data.js';
@@ -8,19 +8,14 @@ import {
   MatchStatus,
   MatchError,
   getErrorMessage,
-  getMatchLevel,
 } from './modules/matcher.js';
-import {
-  generatePortfolioHTML,
-  generateMatchReportHTML,
-} from './modules/generator.js';
 
 // ---- 应用级状态 ----
 
 const AppState = {
   IDLE: 'idle',
   PARSING: 'parsing',
-  READY: 'ready',         // 简历就绪，等待 JD
+  READY: 'ready',
   MATCHING: 'matching',
   GENERATING: 'generating',
   PREVIEW: 'preview',
@@ -28,12 +23,11 @@ const AppState = {
 };
 
 let appState = AppState.IDLE;
-let currentResumeData = null;   // 当前简历数据
-let currentFileName = '';       // 用户上传的文件名
-let generatedHTML = '';         // 最后一次生成的 HTML
-let currentProfile = null;      // 最后一次匹配结果
+let currentResumeData = null;
+let currentFileName = '';
+let currentProfile = null;
 
-// ---- DOM 引用（由 T7 index.html 提供）----
+// ---- DOM 引用 ----
 
 const $ = (id) => document.getElementById(id);
 
@@ -44,12 +38,13 @@ function getElements() {
     useDefaultBtn: $('useDefaultBtn'),
     jdTextarea: $('jdTextarea'),
     generateBtn: $('generateBtn'),
-    previewFrame: $('previewFrame'),
-    matchReport: $('matchReport'),
-    downloadBtn: $('downloadBtn'),
     statusText: $('statusText'),
     errorContainer: $('errorContainer'),
     resumeBadge: $('resumeBadge'),
+    resultPlaceholder: $('resultPlaceholder'),
+    loadingSpinner: $('loadingSpinner'),
+    resultContainer: $('resultContainer'),
+    copyFullBtn: $('copyFullBtn'),
   };
 }
 
@@ -77,9 +72,6 @@ function setUIState(state) {
                             || state === AppState.GENERATING
                             || state === AppState.PARSING;
   }
-  if (els.downloadBtn) {
-    els.downloadBtn.style.display = state === AppState.PREVIEW ? '' : 'none';
-  }
 }
 
 function showError(err, context = '') {
@@ -96,7 +88,6 @@ function showError(err, context = '') {
       <button class="error-dismiss" onclick="this.parentElement.remove()">&times;</button>
     </div>`;
   }
-  // 3 秒后自动恢复
   setTimeout(() => {
     if (appState === AppState.ERROR) {
       setUIState(currentResumeData ? AppState.READY : AppState.IDLE);
@@ -161,12 +152,19 @@ async function handleGenerate() {
 
   clearError();
 
+  // 隐藏占位，显示加载
+  if (els.resultPlaceholder) els.resultPlaceholder.style.display = 'none';
+  if (els.resultContainer) els.resultContainer.style.display = 'none';
+  if (els.loadingSpinner) els.loadingSpinner.style.display = 'flex';
+
   // 匹配阶段
   setUIState(AppState.MATCHING);
   let profile;
   try {
     profile = await matchResumeToJD(currentResumeData, jdText);
   } catch (err) {
+    if (els.loadingSpinner) els.loadingSpinner.style.display = 'none';
+    if (els.resultPlaceholder) els.resultPlaceholder.style.display = '';
     showError(err, 'AI 匹配失败');
     return;
   }
@@ -174,47 +172,238 @@ async function handleGenerate() {
   // 生成阶段
   setUIState(AppState.GENERATING);
   try {
-    generatedHTML = generatePortfolioHTML(profile);
+    renderResult(profile);
   } catch (err) {
-    showError(err, '页面生成失败');
+    if (els.loadingSpinner) els.loadingSpinner.style.display = 'none';
+    if (els.resultPlaceholder) els.resultPlaceholder.style.display = '';
+    showError(err, '页面渲染失败');
     return;
   }
 
   currentProfile = profile;
 
   // 展示结果
-  showPreview(generatedHTML);
-  showMatchReport(profile);
+  if (els.loadingSpinner) els.loadingSpinner.style.display = 'none';
+  if (els.resultContainer) els.resultContainer.style.display = '';
   setUIState(AppState.PREVIEW);
 }
 
-// ---- 预览 & 下载 ----
+// ---- 结果渲染 ----
 
-function showPreview(html) {
-  const els = getElements();
-  if (!els.previewFrame) return;
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  els.previewFrame.src = URL.createObjectURL(blob);
+function renderResult(profile) {
+  renderHero(profile.hero);
+  renderSummary(profile.matchSummary);
+  renderDimensions(profile);
+  renderExperiences(profile.experienceShowcase);
+  renderFooter(profile);
+  bindCopyButtons();
 }
 
-function showMatchReport(profile) {
-  const els = getElements();
-  if (!els.matchReport) return;
-  els.matchReport.innerHTML = generateMatchReportHTML(profile);
-  els.matchReport.style.display = '';
+function renderHero(hero) {
+  const el = $('profileHero');
+  if (!el) return;
+  const tagsHTML = (hero.tags || []).map(t =>
+    `<span class="hero-tag">${escapeHTML(t)}</span>`
+  ).join('');
+  el.innerHTML = `
+    <h1 class="hero-title">${escapeHTML(hero.title || '')}</h1>
+    <p class="hero-positioning">${escapeHTML(hero.positioning || '')}</p>
+    <div class="hero-tags">${tagsHTML}</div>
+    <p class="hero-summary">${escapeHTML(hero.summary || '')}</p>`;
 }
 
-function handleDownload() {
-  if (!generatedHTML) return;
-  const blob = new Blob([generatedHTML], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = (currentResumeData?.name || 'portfolio') + '_展示页.html';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+function renderSummary(summary) {
+  const el = $('profileSummary');
+  if (!el || !summary) return;
+  const strongestHTML = (summary.strongestMatches || []).map(s =>
+    `<li>${escapeHTML(s)}</li>`
+  ).join('');
+  const riskHTML = (summary.riskOrGaps || []).map(s =>
+    `<li>${escapeHTML(s)}</li>`
+  ).join('');
+  el.innerHTML = `
+    <p class="summary-conclusion">${escapeHTML(summary.overallConclusion || '')}</p>
+    <div class="summary-grid">
+      <div class="summary-col">
+        <h4><span class="dot dot-green"></span>最强匹配</h4>
+        <ul>${strongestHTML || '<li>暂无</li>'}</ul>
+      </div>
+      <div class="summary-col">
+        <h4><span class="dot dot-red"></span>风险/差距</h4>
+        <ul>${riskHTML || '<li>暂无</li>'}</ul>
+      </div>
+    </div>`;
+}
+
+function renderDimensions(profile) {
+  const el = $('profileDimensions');
+  if (!el) return;
+
+  const dims = [
+    { key: 'abilityQualificationMatch', icon: '📋', label: '能力资历匹配', cls: 'dim-icon-ability' },
+    { key: 'visionPlanningMatch', icon: '🎯', label: '理念规划匹配', cls: 'dim-icon-vision' },
+    { key: 'statusFitMatch', icon: '⚡', label: '状态适配匹配', cls: 'dim-icon-status' },
+    { key: 'qualityCharacterMatch', icon: '🌟', label: '素养性格匹配', cls: 'dim-icon-quality' },
+  ];
+
+  const cardsHTML = dims.map(d => {
+    const data = profile[d.key];
+    if (!data) return '';
+    const evidenceHTML = (data.evidence || []).map(ev => `
+      <li class="dim-evidence-item">
+        <div class="dim-evidence-title">${escapeHTML(ev.title || '')}</div>
+        <div class="dim-evidence-desc">${escapeHTML(ev.optimizedDescription || '')}</div>
+        ${(ev.highlightedSkills || []).length ? `<div class="dim-evidence-skills">${ev.highlightedSkills.map(s => `<span class="dim-skill-tag">${escapeHTML(s)}</span>`).join('')}</div>` : ''}
+        ${(ev.matchedJDRequirements || []).length ? `<div class="dim-evidence-jd">对应JD：${ev.matchedJDRequirements.map(s => escapeHTML(s)).join('；')}</div>` : ''}
+        ${(ev.improvementSuggestions || []).length ? `<div class="dim-evidence-suggestion">优化建议：${ev.improvementSuggestions.map(s => escapeHTML(s)).join('；')}</div>` : ''}
+      </li>
+    `).join('');
+
+    return `
+      <div class="dimension-card">
+        <div class="dim-card-header">
+          <div class="dim-card-icon ${d.cls}">${d.icon}</div>
+          <h3 class="dim-card-title">${d.label}</h3>
+        </div>
+        <p class="dim-card-conclusion">${escapeHTML(data.conclusion || '')}</p>
+        <ul class="dim-evidence-list">${evidenceHTML}</ul>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <h2 class="section-heading">四维匹配分析</h2>
+    <div class="dimensions-grid">${cardsHTML}</div>`;
+}
+
+function renderExperiences(experiences) {
+  const el = $('profileExperiences');
+  if (!el || !experiences || !experiences.length) return;
+
+  const cardsHTML = experiences.map((exp, i) => `
+    <div class="exp-card">
+      <div class="exp-card-header">
+        <h3 class="exp-card-name">${escapeHTML(exp.name || '经历 ' + (i + 1))}</h3>
+        <span class="exp-card-badge">经历 ${i + 1}</span>
+      </div>
+      <p class="exp-card-desc">${escapeHTML(exp.optimizedDescription || '')}</p>
+      ${(exp.highlightedSkills || []).length ? `<div class="exp-card-skills">${exp.highlightedSkills.map(s => `<span class="dim-skill-tag">${escapeHTML(s)}</span>`).join('')}</div>` : ''}
+      ${(exp.matchedJDRequirements || []).length ? `<div class="exp-card-jd">对应JD：${exp.matchedJDRequirements.map(s => escapeHTML(s)).join('；')}</div>` : ''}
+      ${(exp.improvementSuggestions || []).length ? `<div class="exp-card-suggestion">优化建议：${exp.improvementSuggestions.map(s => escapeHTML(s)).join('；')}</div>` : ''}
+    </div>
+  `).join('');
+
+  el.innerHTML = `
+    <h2 class="section-heading">岗位定制版经历展示</h2>
+    ${cardsHTML}`;
+}
+
+function renderFooter(profile) {
+  const el = $('profileFooter');
+  if (!el) return;
+
+  const highlightsHTML = (profile.interviewHighlights || []).map(h =>
+    `<li>${escapeHTML(h)}</li>`
+  ).join('');
+
+  const missingHTML = (profile.missingInfoSuggestions || []).map(m =>
+    `<li>${escapeHTML(m)}</li>`
+  ).join('');
+
+  const introText = escapeHTML(profile.finalSelfIntroduction || '');
+
+  el.innerHTML = `
+    <div class="footer-section">
+      <h4>💡 面试亮点</h4>
+      <ul class="footer-highlights">${highlightsHTML || '<li>暂无</li>'}</ul>
+    </div>
+    <div class="footer-section">
+      <h4>📝 建议补充信息</h4>
+      <ul class="footer-missing">${missingHTML || '<li>暂无</li>'}</ul>
+    </div>
+    <div class="footer-section">
+      <h4>📋 可复制个人介绍</h4>
+      <div class="footer-intro-box">
+        <button class="footer-intro-copy" data-copy-target="intro">复制</button>
+        <p class="footer-intro-text" id="introText">${introText}</p>
+      </div>
+    </div>`;
+}
+
+// ---- 复制功能 ----
+
+function bindCopyButtons() {
+  // 复制完整内容
+  const copyFullBtn = $('copyFullBtn');
+  if (copyFullBtn) {
+    copyFullBtn.onclick = () => {
+      const container = $('resultContainer');
+      if (!container) return;
+      const text = extractText(container);
+      copyToClipboard(text).then(() => {
+        copyFullBtn.textContent = '已复制!';
+        copyFullBtn.classList.add('copied');
+        setTimeout(() => {
+          copyFullBtn.textContent = '复制完整内容';
+          copyFullBtn.classList.remove('copied');
+        }, 2000);
+      });
+    };
+  }
+
+  // 复制自我介绍
+  const introCopyBtn = document.querySelector('.footer-intro-copy');
+  if (introCopyBtn) {
+    introCopyBtn.onclick = () => {
+      const introText = $('introText');
+      const text = introText ? introText.textContent : '';
+      copyToClipboard(text).then(() => {
+        introCopyBtn.textContent = '已复制!';
+        introCopyBtn.classList.add('copied');
+        setTimeout(() => {
+          introCopyBtn.textContent = '复制';
+          introCopyBtn.classList.remove('copied');
+        }, 2000);
+      });
+    };
+  }
+}
+
+function extractText(container) {
+  // 递归提取纯文本，保留合理换行
+  const lines = [];
+  function walk(node, depth) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const t = node.textContent.trim();
+      if (t) lines.push(t);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const tag = node.tagName.toLowerCase();
+    if (tag === 'br') { lines.push(''); return; }
+    if (tag === 'li') { lines.push('• ' + (node.textContent || '').trim()); return; }
+    if (tag === 'p' || /^h[1-6]$/.test(tag) || tag === 'div') {
+      for (const child of node.childNodes) walk(child, depth + 1);
+      lines.push('');
+      return;
+    }
+    for (const child of node.childNodes) walk(child, depth);
+  }
+  walk(container, 0);
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
 }
 
 // ---- 事件绑定 ----
@@ -222,7 +411,6 @@ function handleDownload() {
 function bindEvents() {
   const els = getElements();
 
-  // 文件选择
   if (els.fileInput) {
     els.fileInput.addEventListener('change', () => {
       const file = els.fileInput.files[0];
@@ -230,7 +418,6 @@ function bindEvents() {
     });
   }
 
-  // 拖拽上传
   if (els.dropZone) {
     els.dropZone.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -245,28 +432,19 @@ function bindEvents() {
       const file = e.dataTransfer.files[0];
       if (file) loadResumeFromFile(file);
     });
-    // 点击触发文件选择
     els.dropZone.addEventListener('click', () => {
       if (els.fileInput) els.fileInput.click();
     });
   }
 
-  // 默认简历
   if (els.useDefaultBtn) {
     els.useDefaultBtn.addEventListener('click', loadDefaultResume);
   }
 
-  // 生成按钮
   if (els.generateBtn) {
     els.generateBtn.addEventListener('click', handleGenerate);
   }
 
-  // 下载按钮
-  if (els.downloadBtn) {
-    els.downloadBtn.addEventListener('click', handleDownload);
-  }
-
-  // Ctrl+Enter 快捷生成
   if (els.jdTextarea) {
     els.jdTextarea.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -284,7 +462,6 @@ function init() {
   setUIState(AppState.IDLE);
 }
 
-// 页面加载完成后自动初始化
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
 } else {

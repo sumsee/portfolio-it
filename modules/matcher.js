@@ -119,11 +119,14 @@ export async function matchResumeToJD(resumeData, jdText) {
 }
 
 /**
- * 客户端侧轻量校验
- * API 端已做完整校验，这里仅验证最基本的字段存在
+ * 客户端侧轻量校验 — 适配新 JSON schema
  */
 function validateClientProfile(profile) {
-    const required = ['matchScore', 'summary', 'highlights', 'suggestions', 'missingSkills', 'tailoredContent'];
+    const required = [
+        'hero', 'matchSummary',
+        'abilityQualificationMatch', 'visionPlanningMatch', 'statusFitMatch', 'qualityCharacterMatch',
+        'experienceShowcase', 'interviewHighlights', 'missingInfoSuggestions', 'finalSelfIntroduction'
+    ];
 
     const missing = required.filter(key => !(key in profile));
     if (missing.length > 0) {
@@ -133,16 +136,12 @@ function validateClientProfile(profile) {
         );
     }
 
-    if (typeof profile.matchScore !== 'number') {
-        throw new MatchError('parse', '匹配分数格式异常，请重试');
+    if (!profile.hero || typeof profile.hero.title !== 'string') {
+        throw new MatchError('parse', '匹配结果缺少 hero 信息，请重试');
     }
 
-    if (!profile.tailoredContent.hero || typeof profile.tailoredContent.hero.name !== 'string') {
-        throw new MatchError('parse', '匹配结果缺少候选人信息，请重试');
-    }
-
-    if (!Array.isArray(profile.tailoredContent.sections)) {
-        throw new MatchError('parse', '匹配结果缺少内容模块，请重试');
+    if (!Array.isArray(profile.experienceShowcase)) {
+        throw new MatchError('parse', '匹配结果缺少经历展示，请重试');
     }
 }
 

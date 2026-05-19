@@ -16,7 +16,7 @@
     </div>
   </nav>
 
-  <!-- 主内容区：左右分栏 -->
+  <!-- 主内容区 -->
   <main class="main-content app-layout">
 
     <!-- 左侧：输入面板 -->
@@ -60,31 +60,45 @@
 
     </section>
 
-    <!-- 右侧：预览面板 -->
-    <section class="app-panel app-preview">
+    <!-- 右侧：结果面板 -->
+    <section class="app-panel app-result" id="resultPanel">
 
-      <!-- 匹配报告 -->
-      <div class="match-report" id="matchReport" style="display:none"></div>
-
-      <!-- 预览 iframe -->
-      <div class="preview-wrapper" id="previewWrapper">
-        <div class="preview-placeholder" id="previewPlaceholder">
-          <div class="placeholder-icon">&#8984;</div>
-          <p>上传简历 + 填写 JD → 点击生成</p>
-          <p>匹配结果将在此实时预览</p>
-        </div>
-        <iframe
-          id="previewFrame"
-          class="preview-frame"
-          sandbox="allow-scripts allow-same-origin"
-          title="生成页面预览"
-          style="display:none"
-        ></iframe>
+      <!-- 占位提示 -->
+      <div class="result-placeholder" id="resultPlaceholder">
+        <div class="placeholder-icon">&#8984;</div>
+        <p>上传简历 + 填写 JD → 点击生成</p>
+        <p>匹配结果将在此展示</p>
       </div>
 
-      <!-- 下载按钮 -->
-      <div class="panel-block" style="text-align:center">
-        <button class="btn btn-download" id="downloadBtn" style="display:none">下载 HTML 文件</button>
+      <!-- 加载动画 -->
+      <div class="loading-spinner" id="loadingSpinner" style="display:none">
+        <div class="spinner"></div>
+        <p>AI 正在分析匹配…</p>
+      </div>
+
+      <!-- 结果容器 -->
+      <div class="result-container" id="resultContainer" style="display:none">
+
+        <!-- 复制按钮 -->
+        <div class="result-toolbar">
+          <button class="btn btn-copy" id="copyFullBtn">复制完整内容</button>
+        </div>
+
+        <!-- Hero 区域 -->
+        <section class="profile-hero" id="profileHero"></section>
+
+        <!-- 匹配摘要 -->
+        <section class="profile-summary" id="profileSummary"></section>
+
+        <!-- 四维度匹配卡片 -->
+        <section class="profile-dimensions" id="profileDimensions"></section>
+
+        <!-- 岗位定制版经历展示 -->
+        <section class="profile-experiences" id="profileExperiences"></section>
+
+        <!-- 页脚 -->
+        <section class="profile-footer" id="profileFooter"></section>
+
       </div>
 
     </section>
