@@ -40,12 +40,27 @@ def find_and_replace_in_paragraph(para, old_text, new_text):
         if normalized_old not in normalized_full:
             return False
 
-    # 文本替换
-    _replace_in_runs(para, old_text, new_text)
+    # 计算替换后的完整段落文本（old_text → new_text，保留段落中前后文）
+    if old_text in full:
+        new_full = full.replace(old_text, new_text, 1)
+    else:
+        new_full = new_text.join(full.split(old_text, 1)) if old_text in full else full
 
-    # 解析并应用格式标记（**bold**, ##red##）
-    if new_text and new_text.strip():
-        apply_formatted_text(para, new_text)
+    # 清空所有现有 runs
+    for run in para.runs:
+        run.text = ''
+
+    if not new_full or not new_full.strip():
+        return True
+
+    # 解析并应用格式标记（**bold**, ##red##）到完整段落文本
+    if '**' in new_full or '##' in new_full:
+        apply_formatted_text(para, new_full)
+    else:
+        if para.runs:
+            para.runs[0].text = new_full
+        else:
+            para.add_run(new_full)
 
     return True
 
@@ -352,6 +367,8 @@ class handler(BaseHTTPRequestHandler):
             self.send_header('Content-Type',
                              'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
             self.send_header('Content-Length', str(len(output_bytes)))
+            self.send_header('X-Optimization-Applied', str(len(applied_records)))
+            self.send_header('X-Optimization-Total', str(len(optimizations)))
             self.end_headers()
             self.wfile.write(output_bytes)
 
