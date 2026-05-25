@@ -9,6 +9,7 @@ Response: DOCX 二进制流
 import base64
 import io
 import json
+import re
 import traceback
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
@@ -30,7 +31,7 @@ def add_cors(handler):
 # ── 核心逻辑 ──────────────────────────────────────────────────────────────
 
 def find_and_replace_in_paragraph(para, old_text, new_text):
-    """在段落中查找并替换文本。返回 True 如果找到并替换。"""
+    """在段落中查找并替换文本，应用格式标记。返回 True 如果找到并替换。"""
     full = para.text
     if old_text not in full:
         # 去空格模糊匹配
@@ -39,8 +40,13 @@ def find_and_replace_in_paragraph(para, old_text, new_text):
         if normalized_old not in normalized_full:
             return False
 
-    # 在 runs 中替换
+    # 文本替换
     _replace_in_runs(para, old_text, new_text)
+
+    # 解析并应用格式标记（**bold**, ##red##）
+    if new_text and new_text.strip():
+        apply_formatted_text(para, new_text)
+
     return True
 
 
@@ -63,6 +69,86 @@ def _replace_in_runs(para, old, new):
         para.runs[0].text = new_full
     else:
         para.add_run(new_full)
+
+
+def apply_formatted_text(paragraph, formatted_text):
+    """解析 formatted_text 中的 **bold** 和 ##red## 格式标记，创建对应 runs。
+
+    标记规则：
+    - **text** → bold=True
+    - ##text## → font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+    - 无标记文本 → 保持原格式
+    """
+    if not formatted_text or not formatted_text.strip():
+        return paragraph
+
+    # 没有格式标记 → 快速路径
+    if '**' not in formatted_text and '##' not in formatted_text:
+        if paragraph.runs:
+            paragraph.runs[0].text = formatted_text
+        else:
+            paragraph.add_run(formatted_text)
+        return paragraph
+
+    # 清空所有现有 runs
+    for run in paragraph.runs:
+        run.text = ''
+
+    # 解析为格式片段
+    segments = _parse_format_segments(formatted_text)
+    if not segments:
+        return paragraph
+
+    # 为每个片段创建 run
+    for i, (text, is_bold, is_red) in enumerate(segments):
+        if i == 0 and paragraph.runs:
+            run = paragraph.runs[0]
+        else:
+            run = paragraph.add_run('')
+
+        run.text = text
+        if is_bold:
+            run.bold = True
+        if is_red:
+            run.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+
+    return paragraph
+
+
+def _parse_format_segments(text):
+    """将带格式标记的文本解析为 (text, is_bold, is_red) 片段列表。"""
+    segments = []
+    pos = 0
+
+    # 匹配 **bold** 或 ##red##（非贪婪）
+    pattern = re.compile(r'\*\*(.+?)\*\*|##(.+?)##')
+
+    for match in pattern.finditer(text):
+        start = match.start()
+        # 匹配前的普通文本
+        if start > pos:
+            normal = text[pos:start]
+            if normal:
+                segments.append((normal, False, False))
+
+        if match.group(1) is not None:
+            # **bold** — group(1) 是加粗内容
+            if match.group(1):
+                segments.append((match.group(1), True, False))
+        elif match.group(2) is not None:
+            # ##red## — group(2) 是标红内容
+            if match.group(2):
+                segments.append((match.group(2), False, True))
+
+        pos = match.end()
+
+    # 末尾剩余普通文本
+    if pos < len(text):
+        remaining = text[pos:]
+        if remaining:
+            segments.append((remaining, False, False))
+
+    return segments
 
 
 def apply_optimizations(doc, optimizations):
