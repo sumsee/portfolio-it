@@ -1,11 +1,10 @@
 // app.js — 工具主控逻辑
 // 串联 上传→解析→匹配→渲染 完整流程
+// 支持 PDF（客户端解析）+ DOCX（base64 直传 API）+ 下载修改版 DOCX
 
 import { parseResumeFile } from './modules/parser.js';
 import { defaultResumeData } from './modules/data.js';
 import {
-  matchResumeToJD,
-  MatchStatus,
   MatchError,
   getErrorMessage,
 } from './modules/matcher.js';
@@ -27,6 +26,12 @@ let currentResumeData = null;
 let currentFileName = '';
 let currentProfile = null;
 
+// DOCX 模式专用
+let currentDocxBase64 = null;       // 用户上传的原始 DOCX base64
+let currentOptimizations = [];      // AI 返回的优化建议
+let currentApiDocxBase64 = null;    // API 返回的 docxBase64（与上传一致）
+let isDocxMode = false;
+
 // ---- DOM 引用 ----
 
 const $ = (id) => document.getElementById(id);
@@ -45,6 +50,7 @@ function getElements() {
     loadingSpinner: $('loadingSpinner'),
     resultContainer: $('resultContainer'),
     copyFullBtn: $('copyFullBtn'),
+    downloadDocxBtn: $('downloadDocxBtn'),
   };
 }
 
@@ -100,16 +106,40 @@ function clearError() {
   if (els.errorContainer) els.errorContainer.innerHTML = '';
 }
 
+// ---- Base64 编码工具 ----
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 // ---- 简历加载 ----
 
 async function loadResumeFromFile(file) {
   clearError();
   setUIState(AppState.PARSING);
+
   try {
     const data = await parseResumeFile(file);
     currentResumeData = data;
     currentFileName = file.name;
     showResumeBadge(file.name, data);
+
+    // 检测文件类型：DOCX 需保存 base64 用于 API 直传
+    const fileName = file.name.toLowerCase();
+    if (fileName.endsWith('.docx')) {
+      const buffer = await file.arrayBuffer();
+      currentDocxBase64 = arrayBufferToBase64(buffer);
+      isDocxMode = true;
+    } else {
+      currentDocxBase64 = null;
+      isDocxMode = false;
+    }
+
     setUIState(AppState.READY);
   } catch (err) {
     showError(err, '简历解析失败');
@@ -120,6 +150,8 @@ function loadDefaultResume() {
   clearError();
   currentResumeData = { ...defaultResumeData };
   currentFileName = '默认简历（吴友虎）';
+  currentDocxBase64 = null;
+  isDocxMode = false;
   showResumeBadge('默认简历', currentResumeData);
   setUIState(AppState.READY);
 }
@@ -129,10 +161,52 @@ function showResumeBadge(label, data) {
   if (!els.resumeBadge) return;
   const skillCount = data.skills ? data.skills.length : 0;
   const expCount = data.experience ? data.experience.length : 0;
+  const modeLabel = isDocxMode ? ' [DOCX直传]' : '';
   els.resumeBadge.innerHTML = `<span class="badge-icon">&#10003;</span>
-    <span class="badge-label">${escapeHTML(label)}</span>
+    <span class="badge-label">${escapeHTML(label)}${modeLabel}</span>
     <span class="badge-detail">${skillCount} 技能 · ${expCount} 段经历</span>`;
   els.resumeBadge.className = 'resume-badge badge-ready';
+}
+
+// ---- API 调用 ----
+
+const API_MATCH = '/api/match';
+const API_GENERATE_DOCX = '/api/generate-docx';
+
+async function callMatchAPI(body) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+  try {
+    const response = await fetch(API_MATCH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let errorData;
+      try { errorData = await response.json(); } catch (_) { errorData = { message: `服务器返回状态码 ${response.status}` }; }
+      throw new MatchError('api', errorData.message || '匹配服务异常，请稍后重试', errorData);
+    }
+
+    let result;
+    try {
+      result = await response.json();
+    } catch (_) {
+      throw new MatchError('parse', '匹配结果解析失败，请重试');
+    }
+
+    return result;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof MatchError) throw err;
+    if (err.name === 'AbortError') throw new MatchError('timeout', '匹配请求超时，请检查网络后重试');
+    throw new MatchError('network', '网络连接失败，请检查网络后重试');
+  }
 }
 
 // ---- 生成流程 ----
@@ -141,7 +215,7 @@ async function handleGenerate() {
   const els = getElements();
   const jdText = els.jdTextarea ? els.jdTextarea.value.trim() : '';
 
-  if (!currentResumeData) {
+  if (!currentResumeData && !currentDocxBase64) {
     showError(new Error('请先上传简历或使用默认简历'));
     return;
   }
@@ -155,13 +229,22 @@ async function handleGenerate() {
   // 隐藏占位，显示加载
   if (els.resultPlaceholder) els.resultPlaceholder.style.display = 'none';
   if (els.resultContainer) els.resultContainer.style.display = 'none';
+  if (els.downloadDocxBtn) els.downloadDocxBtn.style.display = 'none';
   if (els.loadingSpinner) els.loadingSpinner.style.display = 'flex';
+
+  // 构建 API 请求体
+  let apiBody;
+  if (isDocxMode && currentDocxBase64) {
+    apiBody = { docx: currentDocxBase64, jd: jdText };
+  } else {
+    apiBody = { resumeData: currentResumeData, jdText: jdText };
+  }
 
   // 匹配阶段
   setUIState(AppState.MATCHING);
-  let profile;
+  let result;
   try {
-    profile = await matchResumeToJD(currentResumeData, jdText);
+    result = await callMatchAPI(apiBody);
   } catch (err) {
     if (els.loadingSpinner) els.loadingSpinner.style.display = 'none';
     if (els.resultPlaceholder) els.resultPlaceholder.style.display = '';
@@ -172,7 +255,15 @@ async function handleGenerate() {
   // 生成阶段
   setUIState(AppState.GENERATING);
   try {
-    renderResult(profile);
+    // 提取 display 和 optimizations（兼容新旧格式）
+    const display = result.display || result;
+    const optimizations = result.optimizations || [];
+    const docxBase64 = result.docxBase64 || null;
+
+    currentOptimizations = optimizations;
+    currentApiDocxBase64 = docxBase64;
+
+    renderResult(display);
   } catch (err) {
     if (els.loadingSpinner) els.loadingSpinner.style.display = 'none';
     if (els.resultPlaceholder) els.resultPlaceholder.style.display = '';
@@ -180,17 +271,117 @@ async function handleGenerate() {
     return;
   }
 
-  currentProfile = profile;
-
   // 展示结果
   if (els.loadingSpinner) els.loadingSpinner.style.display = 'none';
   if (els.resultContainer) els.resultContainer.style.display = '';
+
+  // 如果有优化建议且是 DOCX 模式，显示下载按钮
+  if (els.downloadDocxBtn && currentOptimizations.length > 0 && currentApiDocxBase64) {
+    els.downloadDocxBtn.style.display = '';
+  }
+
   setUIState(AppState.PREVIEW);
+}
+
+// ---- 下载修改版 DOCX ----
+
+async function handleDownloadDocx() {
+  const els = getElements();
+  const btn = els.downloadDocxBtn;
+  if (!btn) return;
+
+  if (!currentApiDocxBase64) {
+    showError(new Error('缺少原始 DOCX 数据，请重新上传并生成'));
+    return;
+  }
+  if (!currentOptimizations || currentOptimizations.length === 0) {
+    showError(new Error('没有可应用的优化建议'));
+    return;
+  }
+
+  // 提取职位名称作为 jobTitle
+  const jdText = els.jdTextarea ? els.jdTextarea.value.trim() : '';
+  const jobTitle = extractJobTitle(jdText) || '优化简历';
+
+  // 禁用按钮，显示加载状态
+  btn.disabled = true;
+  btn.textContent = '正在生成 DOCX…';
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+    const response = await fetch(API_GENERATE_DOCX, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        docxBase64: currentApiDocxBase64,
+        optimizations: currentOptimizations,
+        jobTitle: jobTitle,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let errorData;
+      try { errorData = await response.json(); } catch (_) { errorData = { message: `服务器返回状态码 ${response.status}` }; }
+      throw new Error(errorData.message || 'DOCX 生成失败');
+    }
+
+    // 读取二进制响应并触发下载
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `resume_optimized_${sanitizeFileName(jobTitle)}.docx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    btn.textContent = '已下载!';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = '下载修改后简历 (.docx)';
+      btn.classList.remove('copied');
+      btn.disabled = false;
+    }, 2000);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = '下载修改后简历 (.docx)';
+    if (err.name === 'AbortError') {
+      showError(new Error('DOCX 生成超时，请重试'));
+    } else {
+      showError(err, 'DOCX 生成失败');
+    }
+  }
+}
+
+function extractJobTitle(jdText) {
+  // 尝试从 JD 中提取职位名称
+  const patterns = [
+    /(?:职位|岗位|招聘)[：:\s]*[【\[]?([^】\]\n，,]{2,20})[】\]]?/,
+    /(?:诚聘|急招|招聘)[：:\s]*[【\[]?([^】\]\n，,]{2,20})[】\]]?/,
+    /(?:安全|网络|运维|开发|测试|数据|前端|后端|全栈|架构|产品|项目经理)[^，,\n]{0,8}(?:工程师|分析师|专家|经理|专员|主管|负责人|实习生|岗)/,
+    /([一-鿿]{2,15}(?:工程师|分析师|专家|经理|专员|主管|负责人|实习生|岗))/,
+  ];
+  for (const re of patterns) {
+    const match = jdText.match(re);
+    if (match) return match[1] || match[0];
+  }
+  return '';
+}
+
+function sanitizeFileName(name) {
+  return name.replace(/[\\/:*?"<>|]/g, '_').substring(0, 50).trim() || 'resume';
 }
 
 // ---- 结果渲染 ----
 
 function renderResult(profile) {
+  currentProfile = profile;
   renderHero(profile.hero);
   renderSummary(profile.matchSummary);
   renderDimensions(profile);
@@ -452,6 +643,10 @@ function bindEvents() {
         handleGenerate();
       }
     });
+  }
+
+  if (els.downloadDocxBtn) {
+    els.downloadDocxBtn.addEventListener('click', handleDownloadDocx);
   }
 }
 

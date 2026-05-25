@@ -3,7 +3,8 @@
   "outputDirectory": "",
   "installCommand": "",
   "rewrites": [
-    { "source": "/api/match", "destination": "/api/match" }
+    { "source": "/api/match", "destination": "/api/match" },
+    { "source": "/api/generate-docx", "destination": "/api/generate-docx" }
   ],
   "headers": [
     {
@@ -14,5 +15,16 @@
         { "key": "Access-Control-Allow-Headers", "value": "Content-Type" }
       ]
     }
-  ]
+  ],
+  "functions": {
+    "api/match.js": {
+      "maxDuration": 60,
+      "memory": 512
+    },
+    "api/generate-docx.py": {
+      "runtime": "@vercel/python@4",
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  }
 }
