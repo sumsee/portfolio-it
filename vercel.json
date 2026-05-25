@@ -22,7 +22,6 @@
       "memory": 512
     },
     "api/generate-docx.py": {
-      "runtime": "@vercel/python@4",
       "maxDuration": 60,
       "memory": 1024
     }
