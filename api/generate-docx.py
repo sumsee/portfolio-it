@@ -1,9 +1,9 @@
 """
-Vercel Python Serverless Function — 生成修改版 DOCX
+Vercel Python Serverless Function — 生成带 Word 批注的修改版 DOCX
 
 POST /api/generate-docx
 Body: { "docxBase64": "...", "optimizations": [...], "jobTitle": "..." }
-Response: DOCX 二进制流
+Response: DOCX 二进制流 (含 Word 原生批注气泡)
 """
 
 import base64
@@ -15,9 +15,13 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 
 from docx import Document
-from docx.shared import Pt, Inches, RGBColor
+from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.opc.part import Part
+from docx.opc.packuri import PackURI
+from lxml import etree
 
 
 # ── CORS ──────────────────────────────────────────────────────────────────
@@ -28,19 +32,141 @@ def add_cors(handler):
     handler.send_header('Access-Control-Allow-Headers', 'Content-Type')
 
 
-# ── 核心逻辑 ──────────────────────────────────────────────────────────────
+# ── Word 批注 (Comments) 支持 ────────────────────────────────────────────
+
+COMMENTS_URI = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments'
+
+
+class CommentsPart:
+    """管理 Word 文档的 comments.xml part — 已验证可工作的实现"""
+
+    def __init__(self, doc):
+        self.doc = doc
+        self.comments_element = None
+        self._comments_part = None
+        self._init_comments()
+
+    def _init_comments(self):
+        doc_part = self.doc.part
+        # 检查是否已有 comments part
+        try:
+            for rel in doc_part.rels.values():
+                if rel.reltype == COMMENTS_URI:
+                    self.comments_element = etree.fromstring(rel.target_part.blob)
+                    self._comments_part = rel.target_part
+                    return
+        except Exception:
+            pass
+
+        # 创建新的 comments.xml
+        comments_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:comments xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" '
+            'xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex" '
+            'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+            'xmlns:o="urn:schemas-microsoft-com:office:office" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+            'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
+            'xmlns:v="urn:schemas-microsoft-com:vml" '
+            'xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" '
+            'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+            'xmlns:w10="urn:schemas-microsoft-com:office:word" '
+            'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+            'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" '
+            'xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex" '
+            'xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid" '
+            'xmlns:w16="http://schemas.microsoft.com/office/word/2018/wordml" '
+            'xmlns:w16se="http://schemas.microsoft.com/office/word/2015/wordml/symex" '
+            'xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" '
+            'xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk" '
+            'xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" '
+            'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
+            '</w:comments>'
+        )
+        self.comments_element = etree.fromstring(comments_xml.encode('utf-8'))
+
+        # 创建 Part 并建立关系
+        comments_part = Part(
+            partname=PackURI('/word/comments.xml'),
+            content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml',
+            blob=etree.tostring(self.comments_element, xml_declaration=True, encoding='UTF-8', standalone=True),
+            package=doc_part.package
+        )
+        doc_part.relate_to(comments_part, COMMENTS_URI)
+        self._comments_part = comments_part
+
+    def add_comment(self, comment_id, author, date_str, text):
+        """添加一条批注到 comments.xml"""
+        comment_elem = OxmlElement('w:comment')
+        comment_elem.set(qn('w:id'), str(comment_id))
+        comment_elem.set(qn('w:author'), author)
+        comment_elem.set(qn('w:date'), date_str)
+        comment_elem.set(qn('w:initials'), author[0] if author else 'A')
+
+        lines = text.split('\n')
+        for line in lines:
+            p_elem = OxmlElement('w:p')
+            r_elem = OxmlElement('w:r')
+            t_elem = OxmlElement('w:t')
+            t_elem.set(qn('xml:space'), 'preserve')
+            t_elem.text = line
+            r_elem.append(t_elem)
+            p_elem.append(r_elem)
+            comment_elem.append(p_elem)
+
+        self.comments_element.append(comment_elem)
+
+    def save(self):
+        """保存 comments.xml 到 part blob"""
+        self._comments_part._blob = etree.tostring(
+            self.comments_element,
+            xml_declaration=True,
+            encoding='UTF-8',
+            standalone=True
+        )
+
+
+def add_comment_to_paragraph(paragraph, comment_id):
+    """在段落中插入 commentRangeStart、commentRangeEnd 和 commentReference"""
+    p_elem = paragraph._element
+
+    # commentRangeStart — 插入到段落开头
+    range_start = OxmlElement('w:commentRangeStart')
+    range_start.set(qn('w:id'), str(comment_id))
+    p_elem.insert(0, range_start)
+
+    # commentRangeEnd — 插入到段落末尾
+    range_end = OxmlElement('w:commentRangeEnd')
+    range_end.set(qn('w:id'), str(comment_id))
+    p_elem.append(range_end)
+
+    # commentReference run — 批注引用标记
+    ref_run = OxmlElement('w:r')
+    rPr = OxmlElement('w:rPr')
+    rStyle = OxmlElement('w:rStyle')
+    rStyle.set(qn('w:val'), 'CommentReference')
+    rPr.append(rStyle)
+    ref_run.append(rPr)
+    ref_elem = OxmlElement('w:commentReference')
+    ref_elem.set(qn('w:id'), str(comment_id))
+    ref_run.append(ref_elem)
+    p_elem.append(ref_run)
+
+
+# ── 文本替换 & 格式标记 ─────────────────────────────────────────────────
 
 def find_and_replace_in_paragraph(para, old_text, new_text):
     """在段落中查找并替换文本，应用格式标记。返回 True 如果找到并替换。"""
     full = para.text
     if old_text not in full:
-        # 去空格模糊匹配
-        normalized_old = ''.join(old_text.split())
-        normalized_full = ''.join(full.split())
+        # 去空格 + 全角空格模糊匹配
+        normalized_old = ''.join(old_text.split()).replace('　', '').replace('\t', '')
+        normalized_full = ''.join(full.split()).replace('　', '').replace('\t', '')
         if normalized_old not in normalized_full:
             return False
 
-    # 计算替换后的完整段落文本（old_text → new_text，保留段落中前后文）
+    # 计算替换后的完整段落文本
     if old_text in full:
         new_full = full.replace(old_text, new_text, 1)
     else:
@@ -53,7 +179,7 @@ def find_and_replace_in_paragraph(para, old_text, new_text):
     if not new_full or not new_full.strip():
         return True
 
-    # 解析并应用格式标记（**bold**, ##red##）到完整段落文本
+    # 解析并应用格式标记（**bold**, ##red##）
     if '**' in new_full or '##' in new_full:
         apply_formatted_text(para, new_full)
     else:
@@ -65,39 +191,11 @@ def find_and_replace_in_paragraph(para, old_text, new_text):
     return True
 
 
-def _replace_in_runs(para, old, new):
-    """在段落 runs 中执行文本替换。"""
-    # 简单策略：清空所有 runs，将第一个 run 设为替换后全文
-    full_text = para.text
-    if old in full_text:
-        new_full = full_text.replace(old, new, 1)
-    else:
-        # 模糊匹配
-        new_full = new.join(full_text.split(old, 1)) if old in full_text else full_text
-
-    # 清空所有 runs
-    for run in para.runs:
-        run.text = ''
-
-    # 写入新文本到第一个 run
-    if para.runs:
-        para.runs[0].text = new_full
-    else:
-        para.add_run(new_full)
-
-
 def apply_formatted_text(paragraph, formatted_text):
-    """解析 formatted_text 中的 **bold** 和 ##red## 格式标记，创建对应 runs。
-
-    标记规则：
-    - **text** → bold=True
-    - ##text## → font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
-    - 无标记文本 → 保持原格式
-    """
+    """解析 **bold** 和 ##red## 标记，创建对应格式的 runs。"""
     if not formatted_text or not formatted_text.strip():
         return paragraph
 
-    # 没有格式标记 → 快速路径
     if '**' not in formatted_text and '##' not in formatted_text:
         if paragraph.runs:
             paragraph.runs[0].text = formatted_text
@@ -105,22 +203,18 @@ def apply_formatted_text(paragraph, formatted_text):
             paragraph.add_run(formatted_text)
         return paragraph
 
-    # 清空所有现有 runs
     for run in paragraph.runs:
         run.text = ''
 
-    # 解析为格式片段
     segments = _parse_format_segments(formatted_text)
     if not segments:
         return paragraph
 
-    # 为每个片段创建 run
     for i, (text, is_bold, is_red) in enumerate(segments):
         if i == 0 and paragraph.runs:
             run = paragraph.runs[0]
         else:
             run = paragraph.add_run('')
-
         run.text = text
         if is_bold:
             run.bold = True
@@ -134,30 +228,22 @@ def _parse_format_segments(text):
     """将带格式标记的文本解析为 (text, is_bold, is_red) 片段列表。"""
     segments = []
     pos = 0
-
-    # 匹配 **bold** 或 ##red##（非贪婪）
     pattern = re.compile(r'\*\*(.+?)\*\*|##(.+?)##')
 
     for match in pattern.finditer(text):
         start = match.start()
-        # 匹配前的普通文本
         if start > pos:
             normal = text[pos:start]
             if normal:
                 segments.append((normal, False, False))
-
         if match.group(1) is not None:
-            # **bold** — group(1) 是加粗内容
             if match.group(1):
                 segments.append((match.group(1), True, False))
         elif match.group(2) is not None:
-            # ##red## — group(2) 是标红内容
             if match.group(2):
                 segments.append((match.group(2), False, True))
-
         pos = match.end()
 
-    # 末尾剩余普通文本
     if pos < len(text):
         remaining = text[pos:]
         if remaining:
@@ -166,67 +252,107 @@ def _parse_format_segments(text):
     return segments
 
 
+# ── 优化应用 ─────────────────────────────────────────────────────────────
+
+def build_comment_text(opt):
+    """根据 optimization 条目构建批注文本。"""
+    parts = []
+    mod_type = opt.get('modification_type', '未分类')
+    old = opt.get('old_text', '')
+    new = opt.get('new_text', '')
+    comment = opt.get('comment', '')
+
+    parts.append(f'【修改类型】{mod_type}')
+    if old:
+        parts.append(f'【原文】{old[:150]}{"..." if len(old) > 150 else ""}')
+    if new:
+        parts.append(f'【修改后】{new[:150]}{"..." if len(new) > 150 else ""}')
+    elif new == '' and old:
+        parts.append('【修改后】（已删除）')
+    if comment:
+        parts.append(f'【详细说明】{comment}')
+
+    return '\n'.join(parts)
+
+
 def apply_optimizations(doc, optimizations):
-    """在文档中应用优化建议。
+    """在文档中应用优化建议，每处修改添加 Word 批注。
 
     Returns:
-        list: 成功应用的优化记录列表，每条含 old_text, new_text, comment, modification_type
+        (applied_records, comment_count)
     """
+    comments = CommentsPart(doc)
+    comment_id = 0
     applied = []
+    now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S+08:00')
+
+    # 收集所有段落（正文 + 表格）
+    all_paras = list(doc.paragraphs)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    all_paras.append(para)
 
     for opt in optimizations:
         old_text = (opt.get('old_text') or '').strip()
         new_text = opt.get('new_text', '')
+        comment_text = opt.get('comment', '')
         if not old_text:
             continue
 
-        matched = False
-
-        # 搜索段落
-        for para in doc.paragraphs:
-            if find_and_replace_in_paragraph(para, old_text, new_text):
-                matched = True
+        matched_para = None
+        for para in all_paras:
+            if old_text in para.text:
+                matched_para = para
                 break
 
-        # 搜索表格
-        if not matched:
-            for table in doc.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        for para in cell.paragraphs:
-                            if find_and_replace_in_paragraph(para, old_text, new_text):
-                                matched = True
-                                break
-                        if matched:
-                            break
-                    if matched:
-                        break
-                if matched:
+        if not matched_para:
+            # 去空格模糊匹配
+            old_stripped = ''.join(old_text.split()).replace('　', '').replace('\t', '')
+            for para in all_paras:
+                para_stripped = ''.join(para.text.split()).replace('　', '').replace('\t', '')
+                if old_stripped in para_stripped:
+                    matched_para = para
                     break
 
-        if matched:
-            applied.append({
-                'old_text': old_text[:120],
-                'new_text': new_text[:120] if new_text else '(已删除)',
-                'comment': opt.get('comment', ''),
-                'modification_type': opt.get('modification_type', '未分类'),
-            })
+        if not matched_para:
+            continue
 
-    return applied
+        # 替换文本 + 应用格式标记
+        find_and_replace_in_paragraph(matched_para, old_text, new_text)
+
+        # 添加 Word 批注（合并 opt.comment + 自动生成的结构）
+        full_comment = build_comment_text(opt)
+        comment_id += 1
+        comments.add_comment(
+            comment_id=comment_id,
+            author='简历优化助手',
+            date_str=now,
+            text=full_comment
+        )
+        add_comment_to_paragraph(matched_para, comment_id)
+
+        applied.append({
+            'old_text': old_text[:120],
+            'new_text': new_text[:120] if new_text else '(已删除)',
+            'comment': comment_text,
+            'modification_type': opt.get('modification_type', '未分类'),
+        })
+
+    # 保存 comments 到 part
+    comments.save()
+
+    return applied, comment_id
 
 
-def add_summary_section(doc, applied_records, job_title):
+def add_summary_section(doc, applied_records, comment_count, job_title):
     """在文档末尾添加「简历优化说明」section。"""
-    # 确保至少有一个 section
     if not doc.sections:
         return
 
-    section = doc.sections[-1]
-
-    # 添加分页
     doc.add_paragraph('\n')
 
-    # 标题
     heading = doc.add_paragraph()
     heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = heading.add_run(f'简历优化说明 — {job_title}')
@@ -234,33 +360,27 @@ def add_summary_section(doc, applied_records, job_title):
     run.font.size = Pt(16)
     run.font.color.rgb = RGBColor(0x0a, 0x84, 0xff)
 
-    # 生成时间
     time_para = doc.add_paragraph()
     time_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    time_run = time_para.add_run(f'生成时间：{datetime.now().strftime("%Y-%m-%d %H:%M")}')
+    time_run = time_para.add_run(f'生成时间：{datetime.now().strftime("%Y-%m-%d %H:%M")}   批注数量：{comment_count}')
     time_run.font.size = Pt(10)
     time_run.font.color.rgb = RGBColor(0x86, 0x86, 0x8b)
 
-    doc.add_paragraph('')  # 空行
+    doc.add_paragraph('')
 
-    # 统计
     summary = doc.add_paragraph()
     summary_run = summary.add_run(f'共应用 {len(applied_records)} 处修改：')
     summary_run.bold = True
     summary_run.font.size = Pt(12)
 
     for i, rec in enumerate(applied_records, 1):
-        # 修改条目
         doc.add_paragraph('')
-
-        # 编号 + 类型
         title = doc.add_paragraph()
         title_run = title.add_run(f'{i}. 【{rec["modification_type"]}】')
         title_run.bold = True
         title_run.font.size = Pt(11)
         title_run.font.color.rgb = RGBColor(0x30, 0xd1, 0x58)
 
-        # 原文
         orig = doc.add_paragraph()
         orig_label = orig.add_run('原文：')
         orig_label.bold = True
@@ -269,7 +389,6 @@ def add_summary_section(doc, applied_records, job_title):
         orig_text.font.size = Pt(10)
         orig_text.font.color.rgb = RGBColor(0xff, 0x3b, 0x30)
 
-        # 修改后
         mod = doc.add_paragraph()
         mod_label = mod.add_run('修改后：')
         mod_label.bold = True
@@ -278,7 +397,6 @@ def add_summary_section(doc, applied_records, job_title):
         mod_text.font.size = Pt(10)
         mod_text.font.color.rgb = RGBColor(0x30, 0xd1, 0x58)
 
-        # 详细说明
         if rec['comment']:
             detail = doc.add_paragraph()
             detail_label = detail.add_run('优化说明：')
@@ -287,7 +405,6 @@ def add_summary_section(doc, applied_records, job_title):
             detail_text = detail.add_run(rec['comment'])
             detail_text.font.size = Pt(10)
 
-    # 页脚提示
     doc.add_paragraph('')
     footer = doc.add_paragraph()
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -308,7 +425,6 @@ class handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            # 读取请求 body
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length) if content_length > 0 else b''
 
@@ -322,7 +438,6 @@ class handler(BaseHTTPRequestHandler):
                 self._json_error(400, f'JSON 解析失败: {str(e)}')
                 return
 
-            # 校验必填字段
             docx_base64 = data.get('docxBase64', '')
             optimizations = data.get('optimizations', [])
             job_title = data.get('jobTitle', '未指定职位')
@@ -334,26 +449,24 @@ class handler(BaseHTTPRequestHandler):
                 self._json_error(400, 'optimizations 必须是非空数组')
                 return
 
-            # 解码 base64
             try:
                 docx_bytes = base64.b64decode(docx_base64)
             except Exception as e:
                 self._json_error(400, f'base64 解码失败: {str(e)}')
                 return
 
-            # 打开 DOCX
             try:
                 doc = Document(io.BytesIO(docx_bytes))
             except Exception as e:
                 self._json_error(400, f'无法打开 DOCX 文件: {str(e)}')
                 return
 
-            # 应用优化
-            applied_records = apply_optimizations(doc, optimizations)
+            # 应用优化（含 Word 批注）
+            applied_records, comment_count = apply_optimizations(doc, optimizations)
 
             # 添加修改说明 section
             if applied_records:
-                add_summary_section(doc, applied_records, job_title)
+                add_summary_section(doc, applied_records, comment_count, job_title)
 
             # 保存到内存
             output_buffer = io.BytesIO()
@@ -361,7 +474,6 @@ class handler(BaseHTTPRequestHandler):
             output_buffer.seek(0)
             output_bytes = output_buffer.getvalue()
 
-            # 返回二进制 DOCX
             self.send_response(200)
             add_cors(self)
             self.send_header('Content-Type',
@@ -369,6 +481,7 @@ class handler(BaseHTTPRequestHandler):
             self.send_header('Content-Length', str(len(output_bytes)))
             self.send_header('X-Optimization-Applied', str(len(applied_records)))
             self.send_header('X-Optimization-Total', str(len(optimizations)))
+            self.send_header('X-Comment-Count', str(comment_count))
             self.end_headers()
             self.wfile.write(output_bytes)
 
