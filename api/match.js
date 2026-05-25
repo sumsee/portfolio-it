@@ -232,7 +232,7 @@ async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey) {
         },
         body: JSON.stringify({
             model: MODEL,
-            max_tokens: 8192,
+            max_tokens: 16384,
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt },
@@ -250,24 +250,57 @@ async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey) {
 }
 
 /**
- * 从 AI 响应文本中提取 JSON
+ * 从 AI 响应文本中提取 JSON（含容错 & 控制字符清理）
  */
 function extractJSON(text) {
     // 尝试匹配 ```json ... ``` 代码块
     const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    let jsonStr;
     if (codeBlockMatch) {
-        return JSON.parse(codeBlockMatch[1].trim());
+        jsonStr = codeBlockMatch[1].trim();
+    } else {
+        // 尝试匹配第一个 { 到最后一个 }
+        const firstBrace = text.indexOf('{');
+        const lastBrace = text.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            jsonStr = text.slice(firstBrace, lastBrace + 1);
+        } else {
+            jsonStr = text.trim();
+        }
     }
 
-    // 尝试匹配第一个 { 到最后一个 }
-    const firstBrace = text.indexOf('{');
-    const lastBrace = text.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        return JSON.parse(text.slice(firstBrace, lastBrace + 1));
-    }
+    // 对提取的字符串做多层容错解析
+    return parseJSONWithRecovery(jsonStr);
+}
 
-    // 直接尝试解析
-    return JSON.parse(text.trim());
+/**
+ * 带容错恢复的 JSON 解析
+ */
+function parseJSONWithRecovery(jsonStr) {
+    // 第 1 次：直接解析
+    try {
+        return JSON.parse(jsonStr);
+    } catch (_) { /* continue */ }
+
+    // 第 2 次：清除非法控制字符（ASCII 0-31 中除了 \t \n \r 之外的字符）
+    try {
+        const cleaned = jsonStr.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ');
+        return JSON.parse(cleaned);
+    } catch (_) { /* continue */ }
+
+    // 第 3 次：同样处理但更激进 — 将 \n \r 也替换为空格
+    try {
+        const cleaned = jsonStr.replace(/[\x00-\x1F\x7F]/g, ' ');
+        return JSON.parse(cleaned);
+    } catch (_) { /* continue */ }
+
+    // 第 4 次：尝试用 eval 作为最后手段（仅服务端，安全可控）
+    try {
+        const cleaned = jsonStr.replace(/[\x00-\x1F\x7F]/g, ' ');
+        return new Function('return ' + cleaned)();
+    } catch (_) {
+        throw new Error('JSON 解析失败：已尝试所有容错手段');
+    }
 }
 
 /**
