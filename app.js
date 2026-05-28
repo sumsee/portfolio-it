@@ -206,6 +206,8 @@ function parseAIResponse(raw) {
     return JSON.parse(repaired);
   } catch {}
 
+  console.error('JSON 解析失败，原始响应前500字符:', raw.slice(0, 500));
+  console.error('JSON 解析失败，原始响应后500字符:', raw.slice(-500));
   throw new Error('AI 返回格式异常，请重试');
 }
 
@@ -450,6 +452,7 @@ async function handleGenerate() {
       el.style.animationDelay = `${i * 0.1}s`;
     });
   } catch (err) {
+    console.error('分析失败:', err);
     $('loadingContainer').style.display = 'none';
     $('uploadSection').style.display = '';
     showError(err.message);
