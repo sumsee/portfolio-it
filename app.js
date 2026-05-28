@@ -1,6 +1,10 @@
 // app.js — 简历智能分析主控逻辑
 // cs2analysis 风格 UI + 6 模块卡片布局 + HR 打招呼 + 四维弹窗
 
+// ---- API 后端地址 ----
+// GitHub Pages 前端 → Vercel 后端 API
+const API_BASE = 'https://portfolio-j091xd1ol-barry-s-projects3.vercel.app';
+
 // ---- 状态 ----
 let currentFile = null;
 let currentDocxBase64 = null;
@@ -150,7 +154,7 @@ async function handleGenerate() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 180000);
 
-    const res = await fetch('/api/match', {
+    const res = await fetch(`${API_BASE}/api/match`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ docx: currentDocxBase64, jd: jdText }),
@@ -219,7 +223,7 @@ async function handleDownloadDocx() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 180000);
 
-    const res = await fetch('/api/generate-docx', {
+    const res = await fetch(`${API_BASE}/api/generate-docx`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -592,7 +596,7 @@ async function handleGenerateGreeting() {
   if (btn) { btn.textContent = '生成中...'; btn.disabled = true; }
 
   try {
-    const res = await fetch('/api/generate-greeting', {
+    const res = await fetch(`${API_BASE}/api/generate-greeting`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ resume: resumeText || '简历已上传', jd: jdText, style: greetingStyle }),
