@@ -633,16 +633,39 @@ function renderExperiences(display) {
   const exps = display?.experienceShowcase;
   if (!exps?.length) { list.innerHTML = '<p style="color:var(--text-muted)">无经历数据</p>'; return; }
 
+  const opts = currentResult?.optimizations || [];
+
   list.innerHTML = exps.map((exp) => {
     const skillsHTML = (exp.highlightedSkills || []).map((s) =>
       `<span class="keyword-tag">${escapeHTML(s)}</span>`
     ).join('');
+
+    // 匹配与此经历相关的优化项
+    const expName = (exp.name || '').toLowerCase();
+    const relatedOpts = opts.filter((o) => {
+      const old = (o.old_text || '').toLowerCase();
+      const cmt = (o.comment || '').toLowerCase();
+      return expName && (old.includes(expName) || cmt.includes(expName) || expName.includes(old.slice(0, 15)));
+    }).slice(0, 3);
+
+    let diffHTML = '';
+    if (relatedOpts.length) {
+      diffHTML = `<div class="exp-diff-list">${relatedOpts.map((o) => `
+        <div class="exp-diff-item">
+          <div class="exp-diff-row">
+            <div class="exp-diff-old"><span class="diff-label">原文</span>${escapeHTML(o.old_text || '').slice(0, 200)}</div>
+            <div class="exp-diff-new"><span class="diff-label">优化后</span>${escapeHTML(o.new_text || '').slice(0, 200)}</div>
+          </div>
+          <div class="exp-diff-comment">${escapeHTML(o.comment || '').slice(0, 300)}</div>
+        </div>`).join('')}</div>`;
+    }
 
     return `
       <div class="item-card info">
         <div class="item-card-title">${escapeHTML(exp.name || '')}</div>
         <p>${escapeHTML(exp.optimizedDescription || '')}</p>
         ${skillsHTML ? `<div style="margin-top:8px">${skillsHTML}</div>` : ''}
+        ${diffHTML}
       </div>`;
   }).join('');
 }
