@@ -135,13 +135,44 @@ async function callDeepSeek(messages, maxTokens = 32768) {
 }
 
 function parseAIResponse(raw) {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-    throw new Error('AI 返回格式异常，请重试');
+  // 第1次：直接解析
+  try { return JSON.parse(raw); } catch {}
+
+  // 提取 JSON 块
+  const codeBlock = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  let jsonStr = codeBlock ? codeBlock[1].trim() : null;
+  if (!jsonStr) {
+    const first = raw.indexOf('{');
+    const last = raw.lastIndexOf('}');
+    jsonStr = (first !== -1 && last > first) ? raw.slice(first, last + 1) : raw;
   }
+
+  // 第2次：清理控制字符后解析
+  try { return JSON.parse(jsonStr.replace(/[\x00-\x1F\x7F]/g, ' ')); } catch {}
+
+  // 第3次：修复截断 JSON
+  try {
+    let repaired = jsonStr.replace(/[\x00-\x1F\x7F]/g, ' ').trimEnd();
+    if (!repaired.endsWith('}') && !repaired.endsWith(']')) {
+      let depth = 0, inStr = false, esc = false;
+      for (const ch of repaired) {
+        if (esc) { esc = false; continue; }
+        if (ch === '\\' && inStr) { esc = true; continue; }
+        if (ch === '"') { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (ch === '{' || ch === '[') depth++;
+        if (ch === '}' || ch === ']') depth--;
+      }
+      if (depth > 0) {
+        const tail = repaired.trimEnd();
+        if (tail.endsWith(':') || tail.endsWith(',')) repaired += '""';
+        for (let i = 0; i < depth; i++) repaired += '}';
+      }
+    }
+    return JSON.parse(repaired);
+  } catch {}
+
+  throw new Error('AI 返回格式异常，请重试');
 }
 
 // ---- DOM ----
