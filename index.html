@@ -35,18 +35,8 @@
         <div class="field-group">
           <label class="field-label">职位描述（JD）</label>
           <div class="jd-input-wrapper">
-            <textarea id="jdTextarea" class="glass-textarea" rows="6" placeholder="粘贴目标岗位的 JD 内容，或上传 JD 截图自动识别..."></textarea>
-            <div class="jd-image-bar">
-              <label class="jd-upload-btn" id="jdUploadBtn">
-                <input type="file" id="jdImageInput" accept="image/*" hidden>
-                上传 JD 截图
-              </label>
-              <span class="jd-upload-status" id="jdUploadStatus"></span>
-            </div>
-            <div class="jd-image-preview" id="jdImagePreview" style="display:none">
-              <img id="jdPreviewImg" alt="JD 截图预览">
-              <button class="jd-remove-img" id="jdRemoveImg">&times;</button>
-            </div>
+            <textarea id="jdTextarea" class="glass-textarea" rows="6" placeholder="粘贴目标岗位的 JD 内容...  支持直接 Ctrl+V 粘贴截图，自动识别文字"></textarea>
+            <span class="jd-paste-hint" id="jdPasteHint"></span>
           </div>
         </div>
 

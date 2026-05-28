@@ -62,24 +62,15 @@ function bindEvents() {
     });
   }
 
-  // JD 图片上传
-  const jdImageInput = $('jdImageInput');
-  if (jdImageInput) {
-    jdImageInput.addEventListener('change', () => {
-      const file = jdImageInput.files[0];
-      if (file) handleJdImageUpload(file);
-    });
-  }
-
-  // JD 图片删除
-  const jdRemoveImg = $('jdRemoveImg');
-  if (jdRemoveImg) {
-    jdRemoveImg.addEventListener('click', () => {
-      const preview = $('jdImagePreview');
-      const status = $('jdUploadStatus');
-      if (preview) preview.style.display = 'none';
-      if (status) { status.textContent = ''; status.className = 'jd-upload-status'; }
-      if (jdImageInput) jdImageInput.value = '';
+  // JD textarea 事件（粘贴图片 + Ctrl+Enter）
+  const jdTextarea = $('jdTextarea');
+  if (jdTextarea) {
+    jdTextarea.addEventListener('paste', handleJdPaste);
+    jdTextarea.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        handleGenerate();
+      }
     });
   }
 
@@ -87,17 +78,6 @@ function bindEvents() {
   const generateBtn = $('generateBtn');
   if (generateBtn) {
     generateBtn.addEventListener('click', handleGenerate);
-  }
-
-  // JD textarea Ctrl+Enter
-  const jdTextarea = $('jdTextarea');
-  if (jdTextarea) {
-    jdTextarea.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault();
-        handleGenerate();
-      }
-    });
   }
 
   // 弹窗关闭
@@ -159,71 +139,52 @@ async function extractResumeText(file) {
   }
 }
 
-// ---- JD 图片 OCR 识别 ----
+// ---- JD 粘贴图片自动识别 ----
 
-let jdOcrAbort = null;
+async function handleJdPaste(e) {
+  const items = e.clipboardData?.items;
+  if (!items) return;
 
-async function handleJdImageUpload(file) {
-  // 预览图片
-  const preview = $('jdImagePreview');
-  const previewImg = $('jdPreviewImg');
-  const status = $('jdUploadStatus');
-
-  if (previewImg) {
-    previewImg.src = URL.createObjectURL(file);
-    if (preview) preview.style.display = '';
-  }
-
-  // 开始 OCR
-  if (status) {
-    status.textContent = '正在识别文字...';
-    status.className = 'jd-upload-status recognizing';
-  }
-
-  try {
-    // 如果之前有正在进行的 OCR，终止它
-    if (jdOcrAbort) {
-      jdOcrAbort();
-      jdOcrAbort = null;
-    }
-
-    const result = await Tesseract.recognize(file, 'chi_sim+eng', {
-      logger: (m) => {
-        if (m.status === 'recognizing text' && m.progress != null) {
-          const pct = Math.round(m.progress * 100);
-          if (status) status.textContent = `正在识别... ${pct}%`;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (file) {
+        const hint = $('jdPasteHint');
+        if (hint) {
+          hint.textContent = '正在识别截图文字...';
+          hint.className = 'jd-paste-hint recognizing';
         }
-      },
-    });
-
-    jdOcrAbort = null;
-    const text = result.data.text?.trim();
-
-    if (text) {
-      // 追加到 textarea（不覆盖已有内容）
-      const textarea = $('jdTextarea');
-      if (textarea) {
-        if (textarea.value.trim()) {
-          textarea.value += '\n\n' + text;
-        } else {
-          textarea.value = text;
+        try {
+          const result = await Tesseract.recognize(file, 'chi_sim+eng');
+          const text = result.data.text?.trim();
+          if (text) {
+            const textarea = $('jdTextarea');
+            if (textarea) {
+              textarea.value = textarea.value.trim()
+                ? textarea.value.trim() + '\n\n' + text
+                : text;
+            }
+            if (hint) {
+              hint.textContent = '识别完成';
+              hint.className = 'jd-paste-hint done';
+              setTimeout(() => { hint.textContent = ''; hint.className = 'jd-paste-hint'; }, 3000);
+            }
+          } else {
+            if (hint) {
+              hint.textContent = '未识别到文字，请重试';
+              hint.className = 'jd-paste-hint';
+            }
+          }
+        } catch (err) {
+          console.error('OCR 失败:', err);
+          if (hint) {
+            hint.textContent = '识别失败，请手动输入';
+            hint.className = 'jd-paste-hint';
+          }
         }
       }
-      if (status) {
-        status.textContent = '识别完成！';
-        status.className = 'jd-upload-status done';
-      }
-    } else {
-      if (status) {
-        status.textContent = '未识别到文字，请确认图片清晰';
-        status.className = 'jd-upload-status';
-      }
-    }
-  } catch (err) {
-    console.error('OCR 识别失败:', err);
-    if (status) {
-      status.textContent = '识别失败，请手动输入';
-      status.className = 'jd-upload-status';
+      break;
     }
   }
 }
