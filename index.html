@@ -3,110 +3,118 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>智能简历匹配展示页生成器</title>
+  <title>简历智能分析</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- 导航栏 -->
-  <nav class="navbar">
-    <div class="nav-container">
-      <div class="nav-logo">简历匹配生成器</div>
-      <span class="status-text status-idle" id="statusText">等待操作</span>
-    </div>
-  </nav>
+  <!-- 页面标题 -->
+  <header class="page-header animate-fade-in-up">
+    <p class="header-kicker">AI Resume Optimizer</p>
+    <h1 class="header-title">简历智能分析</h1>
+    <p class="header-subtitle">AI 驱动的简历-JD 匹配分析与优化平台</p>
+  </header>
 
   <!-- 主内容区 -->
-  <main class="main-content app-layout">
+  <main class="main-container">
 
-    <!-- 左侧：输入面板 -->
-    <section class="app-panel app-input">
+    <!-- 上传区域（分析前显示） -->
+    <section class="card upload-card animate-fade-in-up" id="uploadSection" style="animation-delay:.1s">
+      <p class="card-kicker">Upload</p>
+      <h2 class="card-title">上传简历 & JD</h2>
 
-      <!-- 上传区 -->
-      <div class="panel-block" id="dropZone">
-        <div class="drop-zone">
-          <div class="drop-icon">&#8682;</div>
-          <p class="drop-title">拖拽简历文件到此处</p>
-          <p class="drop-hint">支持 PDF / DOCX，或点击选择文件</p>
-        </div>
-        <input type="file" id="fileInput" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
-        <div class="resume-badge" id="resumeBadge"></div>
-      </div>
-
-      <!-- JD 输入 -->
-      <div class="panel-block">
-        <label class="block-label" for="jdTextarea">岗位 JD 描述</label>
-        <textarea
-          id="jdTextarea"
-          class="jd-textarea"
-          placeholder="在此粘贴岗位 JD 描述…&#10;&#10;Ctrl + Enter 快捷生成"
-          rows="10"
-        ></textarea>
-      </div>
-
-      <!-- 操作按钮 -->
-      <div class="panel-block">
-        <button class="btn btn-primary" id="generateBtn">生成匹配页</button>
-        <span class="btn-hint">Ctrl + Enter</span>
-      </div>
-
-      <!-- 错误提示 -->
-      <div class="error-container" id="errorContainer"></div>
-
-    </section>
-
-    <!-- 右侧：结果面板 -->
-    <section class="app-panel app-result" id="resultPanel">
-
-      <!-- 占位提示 -->
-      <div class="result-placeholder" id="resultPlaceholder">
-        <div class="placeholder-icon">&#8984;</div>
-        <p>上传简历 + 填写 JD → 点击生成</p>
-        <p>匹配结果将在此展示</p>
-      </div>
-
-      <!-- 加载动画 -->
-      <div class="loading-spinner" id="loadingSpinner" style="display:none">
-        <div class="spinner"></div>
-        <p>AI 正在分析匹配…</p>
-      </div>
-
-      <!-- 结果容器 -->
-      <div class="result-container" id="resultContainer" style="display:none">
-
-        <!-- 操作按钮 -->
-        <div class="result-toolbar">
-          <button class="btn btn-download" id="downloadDocxBtn" style="display:none">下载修改后简历 (.docx)</button>
-          <button class="btn btn-copy" id="copyFullBtn">复制完整内容</button>
+      <div class="upload-fields">
+        <div class="field-group">
+          <label class="field-label">简历文件（DOCX）</label>
+          <div class="upload-zone" id="dropZone">
+            <input type="file" id="fileInput" accept=".docx" hidden>
+            <p class="upload-hint" id="uploadHint">点击上传 DOCX 文件</p>
+          </div>
         </div>
 
-        <!-- Hero 区域 -->
-        <section class="profile-hero" id="profileHero"></section>
+        <div class="field-group">
+          <label class="field-label">职位描述（JD）</label>
+          <textarea id="jdTextarea" class="glass-textarea" rows="6" placeholder="粘贴目标岗位的 JD 内容..."></textarea>
+        </div>
 
-        <!-- 匹配摘要 -->
-        <section class="profile-summary" id="profileSummary"></section>
+        <div class="error-box" id="errorBox" style="display:none"></div>
 
-        <!-- 四维度匹配卡片 -->
-        <section class="profile-dimensions" id="profileDimensions"></section>
-
-        <!-- 岗位定制版经历展示 -->
-        <section class="profile-experiences" id="profileExperiences"></section>
-
-        <!-- 页脚 -->
-        <section class="profile-footer" id="profileFooter"></section>
-
+        <button class="primary-btn" id="generateBtn">开始智能分析</button>
       </div>
-
     </section>
+
+    <!-- 加载动画 -->
+    <div class="loading-container" id="loadingContainer" style="display:none">
+      <div class="spinner"></div>
+      <p>AI 正在分析匹配…</p>
+    </div>
+
+    <!-- ===== 结果区 ===== -->
+    <div id="resultArea" style="display:none">
+
+      <!-- 四维匹配标签入口 -->
+      <div class="match-tags-bar animate-fade-in-up" id="matchTagsBar"></div>
+
+      <!-- 模块 1: 简历诊断报告 -->
+      <section class="card stagger-card" id="cardDiagnostic">
+        <p class="card-kicker">Diagnostic Report</p>
+        <h2 class="card-title">简历诊断报告</h2>
+        <div class="diagnostic-body" id="diagnosticBody"></div>
+      </section>
+
+      <!-- 模块 2: 匹配点与风险差距分析 -->
+      <section class="card stagger-card" id="cardMatch">
+        <p class="card-kicker">Match Analysis</p>
+        <h2 class="card-title">匹配点与风险差距分析</h2>
+        <div class="match-grid" id="matchGrid"></div>
+      </section>
+
+      <!-- 模块 3: 岗位定制版经历展示 -->
+      <section class="card stagger-card" id="cardExperience">
+        <p class="card-kicker">Experience</p>
+        <h2 class="card-title">岗位定制版经历展示</h2>
+        <div id="experienceList"></div>
+      </section>
+
+      <!-- 模块 4: 面试亮点与建议补充 -->
+      <section class="card stagger-card" id="cardInterview">
+        <p class="card-kicker">Interview Tips</p>
+        <h2 class="card-title">面试亮点与建议补充</h2>
+        <div id="interviewBody"></div>
+      </section>
+
+      <!-- 模块 5: 面试自我介绍 -->
+      <section class="card stagger-card" id="cardIntro">
+        <p class="card-kicker">Self Introduction</p>
+        <h2 class="card-title">面试自我介绍</h2>
+        <div id="introBody"></div>
+      </section>
+
+      <!-- 模块 6: HR 打招呼信息 -->
+      <section class="card stagger-card" id="cardGreeting">
+        <p class="card-kicker">HR Greeting</p>
+        <h2 class="card-title">HR 打招呼信息</h2>
+        <div id="greetingBody"></div>
+      </section>
+
+    </div>
 
   </main>
 
-  <!-- CDN 依赖：pdf.js + mammoth.js -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <!-- 四维匹配弹窗 -->
+  <div class="modal-overlay" id="modalOverlay" style="display:none">
+    <div class="modal-card" id="modalCard">
+      <button class="modal-close" id="modalClose">&times;</button>
+      <div id="modalContent"></div>
+    </div>
+  </div>
 
-  <!-- 主控逻辑 -->
-  <script type="module" src="app.js"></script>
+  <!-- Toast -->
+  <div class="toast" id="toast" style="display:none"></div>
+
+  <!-- CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <script src="app.js"></script>
 
 </body>
 </html>

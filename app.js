@@ -1,729 +1,23 @@
-// app.js — 工具主控逻辑
-// 串联 上传→解析→匹配→渲染 完整流程
-// 支持 PDF（客户端解析）+ DOCX（base64 直传 API）+ 下载修改版 DOCX
+// app.js — 简历智能分析主控逻辑
+// cs2analysis 风格 UI + 6 模块卡片布局 + HR 打招呼 + 四维弹窗
 
-import { parseResumeFile } from './modules/parser.js';
-import { defaultResumeData } from './modules/data.js';
-import {
-  MatchError,
-  getErrorMessage,
-} from './modules/matcher.js';
+// ---- 状态 ----
+let currentFile = null;
+let currentDocxBase64 = null;
+let currentResult = null;
+let resumeText = '';
 
-// ---- 应用级状态 ----
+// HR 打招呼状态
+let greetingData = null;
+let greetingTab = 'short';
+let greetingStyle = '干练简洁';
 
-const AppState = {
-  IDLE: 'idle',
-  PARSING: 'parsing',
-  READY: 'ready',
-  MATCHING: 'matching',
-  GENERATING: 'generating',
-  PREVIEW: 'preview',
-  ERROR: 'error',
-};
-
-let appState = AppState.IDLE;
-let currentResumeData = null;
-let currentFileName = '';
-let currentProfile = null;
-
-// DOCX 模式专用
-let currentDocxBase64 = null;       // 用户上传的原始 DOCX base64
-let currentOptimizations = [];      // AI 返回的优化建议
-let currentApiDocxBase64 = null;    // API 返回的 docxBase64（与上传一致）
-let isDocxMode = false;
-
-// ---- DOM 引用 ----
-
+// ---- DOM ----
 const $ = (id) => document.getElementById(id);
 
-function getElements() {
-  return {
-    fileInput: $('fileInput'),
-    dropZone: $('dropZone'),
-    useDefaultBtn: $('useDefaultBtn'),
-    jdTextarea: $('jdTextarea'),
-    generateBtn: $('generateBtn'),
-    statusText: $('statusText'),
-    errorContainer: $('errorContainer'),
-    resumeBadge: $('resumeBadge'),
-    resultPlaceholder: $('resultPlaceholder'),
-    loadingSpinner: $('loadingSpinner'),
-    resultContainer: $('resultContainer'),
-    copyFullBtn: $('copyFullBtn'),
-    downloadDocxBtn: $('downloadDocxBtn'),
-  };
-}
-
-// ---- 状态 UI ----
-
-const STATUS_LABEL = {
-  [AppState.IDLE]: '等待操作',
-  [AppState.PARSING]: '正在解析简历…',
-  [AppState.READY]: '简历就绪，请填写 JD',
-  [AppState.MATCHING]: '正在 AI 匹配分析…',
-  [AppState.GENERATING]: '正在生成展示页…',
-  [AppState.PREVIEW]: '预览就绪',
-  [AppState.ERROR]: '出错了',
-};
-
-function setUIState(state) {
-  appState = state;
-  const els = getElements();
-  if (els.statusText) {
-    els.statusText.textContent = STATUS_LABEL[state] || state;
-    els.statusText.className = `status-text status-${state}`;
-  }
-  if (els.generateBtn) {
-    els.generateBtn.disabled = state === AppState.MATCHING
-                            || state === AppState.GENERATING
-                            || state === AppState.PARSING;
-  }
-}
-
-function showError(err, context = '') {
-  setUIState(AppState.ERROR);
-  const els = getElements();
-  const msg = err instanceof MatchError
-    ? getErrorMessage(err)
-    : (err.message || String(err));
-
-  if (els.errorContainer) {
-    els.errorContainer.innerHTML = `<div class="error-msg">
-      <span class="error-icon">!</span>
-      <span>${escapeHTML(context ? context + '：' + msg : msg)}</span>
-      <button class="error-dismiss" onclick="this.parentElement.remove()">&times;</button>
-    </div>`;
-  }
-  setTimeout(() => {
-    if (appState === AppState.ERROR) {
-      setUIState(currentResumeData ? AppState.READY : AppState.IDLE);
-    }
-  }, 8000);
-}
-
-function clearError() {
-  const els = getElements();
-  if (els.errorContainer) els.errorContainer.innerHTML = '';
-}
-
-// ---- Base64 编码工具 ----
-
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-// ---- 简历加载 ----
-
-async function loadResumeFromFile(file) {
-  clearError();
-  setUIState(AppState.PARSING);
-
-  try {
-    const data = await parseResumeFile(file);
-    currentResumeData = data;
-    currentFileName = file.name;
-    showResumeBadge(file.name, data);
-
-    // 检测文件类型：DOCX 需保存 base64 用于 API 直传
-    const fileName = file.name.toLowerCase();
-    if (fileName.endsWith('.docx')) {
-      const buffer = await file.arrayBuffer();
-      currentDocxBase64 = arrayBufferToBase64(buffer);
-      isDocxMode = true;
-    } else {
-      currentDocxBase64 = null;
-      isDocxMode = false;
-    }
-
-    setUIState(AppState.READY);
-  } catch (err) {
-    showError(err, '简历解析失败');
-  }
-}
-
-function loadDefaultResume() {
-  clearError();
-  currentResumeData = { ...defaultResumeData };
-  currentFileName = '默认简历（吴友虎）';
-  currentDocxBase64 = null;
-  isDocxMode = false;
-  showResumeBadge('默认简历', currentResumeData);
-  setUIState(AppState.READY);
-}
-
-function showResumeBadge(label, data) {
-  const els = getElements();
-  if (!els.resumeBadge) return;
-  const skillCount = data.skills ? data.skills.length : 0;
-  const expCount = data.experience ? data.experience.length : 0;
-  const modeLabel = isDocxMode ? ' [DOCX直传]' : '';
-  els.resumeBadge.innerHTML = `<span class="badge-icon">&#10003;</span>
-    <span class="badge-label">${escapeHTML(label)}${modeLabel}</span>
-    <span class="badge-detail">${skillCount} 技能 · ${expCount} 段经历</span>`;
-  els.resumeBadge.className = 'resume-badge badge-ready';
-}
-
-// ---- API 调用 ----
-
-const API_MATCH = '/api/match';
-const API_GENERATE_DOCX = '/api/generate-docx';
-
-async function callMatchAPI(body) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 180000);
-
-  try {
-    const response = await fetch(API_MATCH, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      let errorData;
-      try { errorData = await response.json(); } catch (_) { errorData = { message: `服务器返回状态码 ${response.status}` }; }
-      throw new MatchError('api', errorData.message || '匹配服务异常，请稍后重试', errorData);
-    }
-
-    let result;
-    try {
-      result = await response.json();
-    } catch (_) {
-      throw new MatchError('parse', '匹配结果解析失败，请重试');
-    }
-
-    return result;
-  } catch (err) {
-    clearTimeout(timeoutId);
-    if (err instanceof MatchError) throw err;
-    if (err.name === 'AbortError') throw new MatchError('timeout', '匹配请求超时，请检查网络后重试');
-    throw new MatchError('network', '网络连接失败，请检查网络后重试');
-  }
-}
-
-// ---- 生成流程 ----
-
-async function handleGenerate() {
-  const els = getElements();
-  const jdText = els.jdTextarea ? els.jdTextarea.value.trim() : '';
-
-  if (!currentResumeData && !currentDocxBase64) {
-    showError(new Error('请先上传简历或使用默认简历'));
-    return;
-  }
-  if (!jdText) {
-    showError(new Error('请填写岗位 JD 描述'));
-    return;
-  }
-
-  clearError();
-
-  // 隐藏占位，显示加载
-  if (els.resultPlaceholder) els.resultPlaceholder.style.display = 'none';
-  if (els.resultContainer) els.resultContainer.style.display = 'none';
-  if (els.downloadDocxBtn) els.downloadDocxBtn.style.display = 'none';
-  if (els.loadingSpinner) els.loadingSpinner.style.display = 'flex';
-
-  // 构建 API 请求体
-  let apiBody;
-  if (isDocxMode && currentDocxBase64) {
-    apiBody = { docx: currentDocxBase64, jd: jdText };
-  } else {
-    apiBody = { resumeData: currentResumeData, jdText: jdText };
-  }
-
-  // 匹配阶段
-  setUIState(AppState.MATCHING);
-  let result;
-  try {
-    result = await callMatchAPI(apiBody);
-  } catch (err) {
-    if (els.loadingSpinner) els.loadingSpinner.style.display = 'none';
-    if (els.resultPlaceholder) els.resultPlaceholder.style.display = '';
-    showError(err, 'AI 匹配失败');
-    return;
-  }
-
-  // 生成阶段
-  setUIState(AppState.GENERATING);
-  try {
-    // 提取 diagnosticReport、display 和 optimizations（兼容新旧格式）
-    const diagnosticReport = result.diagnosticReport || null;
-    const display = result.display || result;
-    const optimizations = result.optimizations || [];
-    const docxBase64 = result.docxBase64 || null;
-
-    currentOptimizations = optimizations;
-    currentApiDocxBase64 = docxBase64;
-
-    renderResult(display, diagnosticReport);
-  } catch (err) {
-    if (els.loadingSpinner) els.loadingSpinner.style.display = 'none';
-    if (els.resultPlaceholder) els.resultPlaceholder.style.display = '';
-    showError(err, '页面渲染失败');
-    return;
-  }
-
-  // 展示结果
-  if (els.loadingSpinner) els.loadingSpinner.style.display = 'none';
-  if (els.resultContainer) els.resultContainer.style.display = '';
-
-  // 如果有优化建议且是 DOCX 模式，显示下载按钮
-  if (els.downloadDocxBtn && currentOptimizations.length > 0 && currentApiDocxBase64) {
-    els.downloadDocxBtn.style.display = '';
-  }
-
-  setUIState(AppState.PREVIEW);
-}
-
-// ---- 下载修改版 DOCX ----
-
-async function handleDownloadDocx() {
-  const els = getElements();
-  const btn = els.downloadDocxBtn;
-  if (!btn) return;
-
-  if (!currentApiDocxBase64) {
-    showError(new Error('缺少原始 DOCX 数据，请重新上传并生成'));
-    return;
-  }
-  if (!currentOptimizations || currentOptimizations.length === 0) {
-    showError(new Error('没有可应用的优化建议'));
-    return;
-  }
-
-  // 提取职位名称作为 jobTitle
-  const jdText = els.jdTextarea ? els.jdTextarea.value.trim() : '';
-  const jobTitle = extractJobTitle(jdText) || '优化简历';
-
-  // 禁用按钮，显示加载状态
-  btn.disabled = true;
-  btn.textContent = '正在生成 DOCX…';
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180000);
-
-    const response = await fetch(API_GENERATE_DOCX, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        docxBase64: currentApiDocxBase64,
-        optimizations: currentOptimizations,
-        jobTitle: jobTitle,
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      let errorData;
-      try { errorData = await response.json(); } catch (_) { errorData = { message: `服务器返回状态码 ${response.status}` }; }
-      throw new Error(errorData.message || 'DOCX 生成失败');
-    }
-
-    // 读取二进制响应并触发下载
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `resume_optimized_${sanitizeFileName(jobTitle)}.docx`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    btn.textContent = '已下载!';
-    btn.classList.add('copied');
-    setTimeout(() => {
-      btn.textContent = '下载修改后简历 (.docx)';
-      btn.classList.remove('copied');
-      btn.disabled = false;
-    }, 2000);
-  } catch (err) {
-    btn.disabled = false;
-    btn.textContent = '下载修改后简历 (.docx)';
-    if (err.name === 'AbortError') {
-      showError(new Error('DOCX 生成超时，请重试'));
-    } else {
-      showError(err, 'DOCX 生成失败');
-    }
-  }
-}
-
-function extractJobTitle(jdText) {
-  // 尝试从 JD 中提取职位名称
-  const patterns = [
-    /(?:职位|岗位|招聘)[：:\s]*[【\[]?([^】\]\n，,]{2,20})[】\]]?/,
-    /(?:诚聘|急招|招聘)[：:\s]*[【\[]?([^】\]\n，,]{2,20})[】\]]?/,
-    /(?:安全|网络|运维|开发|测试|数据|前端|后端|全栈|架构|产品|项目经理)[^，,\n]{0,8}(?:工程师|分析师|专家|经理|专员|主管|负责人|实习生|岗)/,
-    /([一-鿿]{2,15}(?:工程师|分析师|专家|经理|专员|主管|负责人|实习生|岗))/,
-  ];
-  for (const re of patterns) {
-    const match = jdText.match(re);
-    if (match) return match[1] || match[0];
-  }
-  return '';
-}
-
-function sanitizeFileName(name) {
-  return name.replace(/[\\/:*?"<>|]/g, '_').substring(0, 50).trim() || 'resume';
-}
-
-// ---- 结果渲染 ----
-
-function renderResult(profile, diagnosticReport) {
-  currentProfile = profile;
-  if (diagnosticReport) {
-    renderDiagnosticReport(diagnosticReport);
-  }
-  renderHero(profile.hero);
-  renderSummary(profile.matchSummary);
-  renderDimensions(profile);
-  renderExperiences(profile.experienceShowcase);
-  renderFooter(profile);
-  bindCopyButtons();
-}
-
-function renderDiagnosticReport(report) {
-  const el = $('profileHero');
-  if (!el || !report) return;
-
-  const dims = report.dimensions || {};
-  const dimOrder = ['jdMatch', 'quantification', 'structure', 'language', 'ats'];
-  const statusIcons = { ok: '✅', warning: '⚠️', critical: '❌' };
-  const statusLabels = { ok: '良好', warning: '需优化', critical: '严重不足' };
-
-  let dimRows = '';
-  for (const key of dimOrder) {
-    const d = dims[key];
-    if (!d) continue;
-    const pct = Math.round((d.score / d.maxScore) * 100);
-    const barColor = pct >= 75 ? 'bar-green' : pct >= 50 ? 'bar-yellow' : 'bar-red';
-    dimRows += `
-      <div class="score-row">
-        <div class="score-label">
-          <span class="score-icon">${statusIcons[d.status] || '⚠️'}</span>
-          <span>${d.label}</span>
-          <span class="score-num">${d.score}/${d.maxScore}</span>
-        </div>
-        <div class="score-bar-track">
-          <div class="score-bar-fill ${barColor}" style="width:${pct}%"></div>
-        </div>
-        <div class="score-detail">${escapeHTML(d.detail || '')}</div>
-      </div>`;
-  }
-
-  const strengthsHTML = (report.strengths || []).map(s => `<li>${escapeHTML(s)}</li>`).join('');
-  const issuesHTML = (report.criticalIssues || []).map(s => `<li>${escapeHTML(s)}</li>`).join('');
-
-  const container = el.parentNode;
-  const banner = document.createElement('div');
-  banner.className = 'diagnostic-banner';
-  banner.innerHTML = `
-    <div class="diagnostic-header">
-      <h2>📊 简历诊断报告</h2>
-      <div class="diagnostic-overall">
-        <span class="overall-score">${report.overallScore || '--'}<small>/100</small></span>
-        <span class="overall-star">${report.overallStar || ''}</span>
-      </div>
-    </div>
-    <div class="diagnostic-body">
-      <div class="score-section">
-        <h4>五维度评分</h4>
-        ${dimRows}
-      </div>
-      <div class="diagnostic-grid">
-        <div class="diagnostic-col">
-          <h4>✨ 主要优势</h4>
-          <ul>${strengthsHTML || '<li>暂无</li>'}</ul>
-        </div>
-        <div class="diagnostic-col">
-          <h4>⚠️ 关键问题</h4>
-          <ul>${issuesHTML || '<li>暂无</li>'}</ul>
-        </div>
-      </div>
-      <div class="diagnostic-potential">
-        <p>📈 ${escapeHTML(report.optimizationPotential || '')}</p>
-      </div>
-    </div>`;
-  container.insertBefore(banner, el);
-}
-
-function renderHero(hero) {
-  const el = $('profileHero');
-  if (!el) return;
-  const tagsHTML = (hero.tags || []).map(t =>
-    `<span class="hero-tag">${escapeHTML(t)}</span>`
-  ).join('');
-  el.innerHTML = `
-    <h1 class="hero-title">${escapeHTML(hero.title || '')}</h1>
-    <p class="hero-positioning">${escapeHTML(hero.positioning || '')}</p>
-    <div class="hero-tags">${tagsHTML}</div>
-    <p class="hero-summary">${escapeHTML(hero.summary || '')}</p>`;
-}
-
-function renderSummary(summary) {
-  const el = $('profileSummary');
-  if (!el || !summary) return;
-  const strongestHTML = (summary.strongestMatches || []).map(s =>
-    `<li>${escapeHTML(s)}</li>`
-  ).join('');
-  const riskHTML = (summary.riskOrGaps || []).map(s =>
-    `<li>${escapeHTML(s)}</li>`
-  ).join('');
-  el.innerHTML = `
-    <p class="summary-conclusion">${escapeHTML(summary.overallConclusion || '')}</p>
-    <div class="summary-grid">
-      <div class="summary-col">
-        <h4><span class="dot dot-green"></span>最强匹配</h4>
-        <ul>${strongestHTML || '<li>暂无</li>'}</ul>
-      </div>
-      <div class="summary-col">
-        <h4><span class="dot dot-red"></span>风险/差距</h4>
-        <ul>${riskHTML || '<li>暂无</li>'}</ul>
-      </div>
-    </div>`;
-}
-
-function renderDimensions(profile) {
-  const el = $('profileDimensions');
-  if (!el) return;
-
-  const dims = [
-    { key: 'abilityQualificationMatch', icon: '📋', label: '能力资历匹配', cls: 'dim-icon-ability' },
-    { key: 'visionPlanningMatch', icon: '🎯', label: '理念规划匹配', cls: 'dim-icon-vision' },
-    { key: 'statusFitMatch', icon: '⚡', label: '状态适配匹配', cls: 'dim-icon-status' },
-    { key: 'qualityCharacterMatch', icon: '🌟', label: '素养性格匹配', cls: 'dim-icon-quality' },
-  ];
-
-  const cardsHTML = dims.map(d => {
-    const data = profile[d.key];
-    if (!data) return '';
-    const evidenceHTML = (data.evidence || []).map(ev => `
-      <li class="dim-evidence-item">
-        <div class="dim-evidence-title">${escapeHTML(ev.title || '')}</div>
-        <div class="dim-evidence-desc">${escapeHTML(ev.optimizedDescription || '')}</div>
-        ${(ev.highlightedSkills || []).length ? `<div class="dim-evidence-skills">${ev.highlightedSkills.map(s => `<span class="dim-skill-tag">${escapeHTML(s)}</span>`).join('')}</div>` : ''}
-        ${(ev.matchedJDRequirements || []).length ? `<div class="dim-evidence-jd">对应JD：${ev.matchedJDRequirements.map(s => escapeHTML(s)).join('；')}</div>` : ''}
-        ${(ev.improvementSuggestions || []).length ? `<div class="dim-evidence-suggestion">优化建议：${ev.improvementSuggestions.map(s => escapeHTML(s)).join('；')}</div>` : ''}
-      </li>
-    `).join('');
-
-    return `
-      <div class="dimension-card">
-        <div class="dim-card-header">
-          <div class="dim-card-icon ${d.cls}">${d.icon}</div>
-          <h3 class="dim-card-title">${d.label}</h3>
-        </div>
-        <p class="dim-card-conclusion">${escapeHTML(data.conclusion || '')}</p>
-        <ul class="dim-evidence-list">${evidenceHTML}</ul>
-      </div>`;
-  }).join('');
-
-  el.innerHTML = `
-    <h2 class="section-heading">四维匹配分析</h2>
-    <div class="dimensions-grid">${cardsHTML}</div>`;
-}
-
-function renderExperiences(experiences) {
-  const el = $('profileExperiences');
-  if (!el || !experiences || !experiences.length) return;
-
-  const cardsHTML = experiences.map((exp, i) => `
-    <div class="exp-card">
-      <div class="exp-card-header">
-        <h3 class="exp-card-name">${escapeHTML(exp.name || '经历 ' + (i + 1))}</h3>
-        <span class="exp-card-badge">经历 ${i + 1}</span>
-      </div>
-      <p class="exp-card-desc">${escapeHTML(exp.optimizedDescription || '')}</p>
-      ${(exp.highlightedSkills || []).length ? `<div class="exp-card-skills">${exp.highlightedSkills.map(s => `<span class="dim-skill-tag">${escapeHTML(s)}</span>`).join('')}</div>` : ''}
-      ${(exp.matchedJDRequirements || []).length ? `<div class="exp-card-jd">对应JD：${exp.matchedJDRequirements.map(s => escapeHTML(s)).join('；')}</div>` : ''}
-      ${(exp.improvementSuggestions || []).length ? `<div class="exp-card-suggestion">优化建议：${exp.improvementSuggestions.map(s => escapeHTML(s)).join('；')}</div>` : ''}
-    </div>
-  `).join('');
-
-  el.innerHTML = `
-    <h2 class="section-heading">岗位定制版经历展示</h2>
-    ${cardsHTML}`;
-}
-
-function renderFooter(profile) {
-  const el = $('profileFooter');
-  if (!el) return;
-
-  const highlightsHTML = (profile.interviewHighlights || []).map(h =>
-    `<li>${escapeHTML(h)}</li>`
-  ).join('');
-
-  const missingHTML = (profile.missingInfoSuggestions || []).map(m =>
-    `<li>${escapeHTML(m)}</li>`
-  ).join('');
-
-  const introText = escapeHTML(profile.finalSelfIntroduction || '');
-
-  el.innerHTML = `
-    <div class="footer-section">
-      <h4>💡 面试亮点</h4>
-      <ul class="footer-highlights">${highlightsHTML || '<li>暂无</li>'}</ul>
-    </div>
-    <div class="footer-section">
-      <h4>📝 建议补充信息</h4>
-      <ul class="footer-missing">${missingHTML || '<li>暂无</li>'}</ul>
-    </div>
-    <div class="footer-section">
-      <h4>📋 可复制个人介绍</h4>
-      <div class="footer-intro-box">
-        <button class="footer-intro-copy" data-copy-target="intro">复制</button>
-        <p class="footer-intro-text" id="introText">${introText}</p>
-      </div>
-    </div>`;
-}
-
-// ---- 复制功能 ----
-
-function bindCopyButtons() {
-  // 复制完整内容
-  const copyFullBtn = $('copyFullBtn');
-  if (copyFullBtn) {
-    copyFullBtn.onclick = () => {
-      const container = $('resultContainer');
-      if (!container) return;
-      const text = extractText(container);
-      copyToClipboard(text).then(() => {
-        copyFullBtn.textContent = '已复制!';
-        copyFullBtn.classList.add('copied');
-        setTimeout(() => {
-          copyFullBtn.textContent = '复制完整内容';
-          copyFullBtn.classList.remove('copied');
-        }, 2000);
-      });
-    };
-  }
-
-  // 复制自我介绍
-  const introCopyBtn = document.querySelector('.footer-intro-copy');
-  if (introCopyBtn) {
-    introCopyBtn.onclick = () => {
-      const introText = $('introText');
-      const text = introText ? introText.textContent : '';
-      copyToClipboard(text).then(() => {
-        introCopyBtn.textContent = '已复制!';
-        introCopyBtn.classList.add('copied');
-        setTimeout(() => {
-          introCopyBtn.textContent = '复制';
-          introCopyBtn.classList.remove('copied');
-        }, 2000);
-      });
-    };
-  }
-}
-
-function extractText(container) {
-  // 递归提取纯文本，保留合理换行
-  const lines = [];
-  function walk(node, depth) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      const t = node.textContent.trim();
-      if (t) lines.push(t);
-      return;
-    }
-    if (node.nodeType !== Node.ELEMENT_NODE) return;
-    const tag = node.tagName.toLowerCase();
-    if (tag === 'br') { lines.push(''); return; }
-    if (tag === 'li') { lines.push('• ' + (node.textContent || '').trim()); return; }
-    if (tag === 'p' || /^h[1-6]$/.test(tag) || tag === 'div') {
-      for (const child of node.childNodes) walk(child, depth + 1);
-      lines.push('');
-      return;
-    }
-    for (const child of node.childNodes) walk(child, depth);
-  }
-  walk(container, 0);
-  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-}
-
-async function copyToClipboard(text) {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-  }
-}
-
-// ---- 事件绑定 ----
-
-function bindEvents() {
-  const els = getElements();
-
-  if (els.fileInput) {
-    els.fileInput.addEventListener('change', () => {
-      const file = els.fileInput.files[0];
-      if (file) loadResumeFromFile(file);
-    });
-  }
-
-  if (els.dropZone) {
-    els.dropZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      els.dropZone.classList.add('drag-over');
-    });
-    els.dropZone.addEventListener('dragleave', () => {
-      els.dropZone.classList.remove('drag-over');
-    });
-    els.dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      els.dropZone.classList.remove('drag-over');
-      const file = e.dataTransfer.files[0];
-      if (file) loadResumeFromFile(file);
-    });
-    els.dropZone.addEventListener('click', () => {
-      if (els.fileInput) els.fileInput.click();
-    });
-  }
-
-  if (els.useDefaultBtn) {
-    els.useDefaultBtn.addEventListener('click', loadDefaultResume);
-  }
-
-  if (els.generateBtn) {
-    els.generateBtn.addEventListener('click', handleGenerate);
-  }
-
-  if (els.jdTextarea) {
-    els.jdTextarea.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault();
-        handleGenerate();
-      }
-    });
-  }
-
-  if (els.downloadDocxBtn) {
-    els.downloadDocxBtn.addEventListener('click', handleDownloadDocx);
-  }
-}
-
 // ---- 初始化 ----
-
 function init() {
   bindEvents();
-  setUIState(AppState.IDLE);
 }
 
 if (document.readyState === 'loading') {
@@ -732,8 +26,622 @@ if (document.readyState === 'loading') {
   init();
 }
 
-// ---- 工具函数 ----
+// ---- 事件绑定 ----
+function bindEvents() {
+  // 文件上传
+  const dropZone = $('dropZone');
+  const fileInput = $('fileInput');
 
+  if (dropZone) {
+    dropZone.addEventListener('click', () => fileInput?.click());
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = 'var(--accent)';
+    });
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.style.borderColor = '';
+    });
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = '';
+      const file = e.dataTransfer.files[0];
+      if (file) handleFileSelect(file);
+    });
+  }
+
+  if (fileInput) {
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (file) handleFileSelect(file);
+    });
+  }
+
+  // 生成按钮
+  const generateBtn = $('generateBtn');
+  if (generateBtn) {
+    generateBtn.addEventListener('click', handleGenerate);
+  }
+
+  // JD textarea Ctrl+Enter
+  const jdTextarea = $('jdTextarea');
+  if (jdTextarea) {
+    jdTextarea.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        handleGenerate();
+      }
+    });
+  }
+
+  // 弹窗关闭
+  const modalOverlay = $('modalOverlay');
+  const modalClose = $('modalClose');
+  if (modalOverlay) {
+    modalOverlay.addEventListener('click', (e) => {
+      if (e.target === modalOverlay) closeModal();
+    });
+  }
+  if (modalClose) {
+    modalClose.addEventListener('click', closeModal);
+  }
+}
+
+// ---- 文件处理 ----
+function handleFileSelect(file) {
+  currentFile = file;
+  const hint = $('uploadHint');
+  if (hint) {
+    hint.textContent = file.name;
+    hint.classList.add('has-file');
+  }
+
+  // DOCX 模式：保存 base64
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.docx')) {
+    file.arrayBuffer().then((buf) => {
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      currentDocxBase64 = btoa(binary);
+    });
+  } else {
+    currentDocxBase64 = null;
+  }
+
+  // 提取文本用于 HR 模块
+  extractResumeText(file);
+}
+
+async function extractResumeText(file) {
+  try {
+    if (typeof mammoth !== 'undefined' && file.name.toLowerCase().endsWith('.docx')) {
+      const buf = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer: buf });
+      resumeText = result.value;
+    }
+  } catch (e) {
+    console.warn('简历文本提取失败:', e);
+  }
+}
+
+// ---- API 调用 ----
+async function handleGenerate() {
+  const jdText = $('jdTextarea')?.value?.trim() || '';
+
+  if (!currentDocxBase64) {
+    showError('请先上传 DOCX 简历文件');
+    return;
+  }
+  if (!jdText) {
+    showError('请填写岗位 JD 描述');
+    return;
+  }
+
+  clearError();
+
+  // 显示加载
+  $('uploadSection').style.display = 'none';
+  $('loadingContainer').style.display = '';
+  $('resultArea').style.display = 'none';
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
+
+    const res = await fetch('/api/match', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ docx: currentDocxBase64, jd: jdText }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.message || `请求失败 (${res.status})`);
+    }
+
+    currentResult = await res.json();
+    renderAll(currentResult);
+
+    $('loadingContainer').style.display = 'none';
+    $('resultArea').style.display = '';
+
+    // 触发 stagger 动画
+    document.querySelectorAll('.stagger-card').forEach((el, i) => {
+      el.style.animationDelay = `${i * 0.1}s`;
+    });
+  } catch (err) {
+    $('loadingContainer').style.display = 'none';
+    $('uploadSection').style.display = '';
+    showError(err.name === 'AbortError' ? '请求超时，请重试' : err.message);
+  }
+}
+
+// ---- 错误处理 ----
+function showError(msg) {
+  const box = $('errorBox');
+  if (box) {
+    box.textContent = msg;
+    box.style.display = '';
+  }
+}
+
+function clearError() {
+  const box = $('errorBox');
+  if (box) box.style.display = 'none';
+}
+
+// ---- Toast ----
+function showToast(msg) {
+  const toast = $('toast');
+  if (!toast) return;
+  toast.textContent = msg;
+  toast.style.display = '';
+  toast.classList.remove('leaving');
+  void toast.offsetWidth;
+  setTimeout(() => {
+    toast.classList.add('leaving');
+    setTimeout(() => { toast.style.display = 'none'; toast.classList.remove('leaving'); }, 300);
+  }, 1200);
+}
+
+// ---- 渲染全部 ----
+function renderAll(result) {
+  const dr = result.diagnosticReport || null;
+  const display = result.display || result;
+
+  renderMatchTags(dr);
+  renderDiagnostic(dr, display);
+  renderMatchAnalysis(display);
+  renderExperiences(display);
+  renderInterview(display);
+  renderSelfIntro(display);
+  renderGreeting();
+}
+
+// ---- 四维匹配标签 ----
+function renderMatchTags(dr) {
+  const bar = $('matchTagsBar');
+  if (!bar || !dr?.dimensions) { bar.innerHTML = ''; return; }
+
+  const tabs = [
+    { key: 'jdMatch', label: '技能匹配' },
+    { key: 'quantification', label: '经验匹配' },
+    { key: 'structure', label: '学历匹配' },
+    { key: 'ats', label: '综合评分' },
+  ];
+
+  bar.innerHTML = tabs.map((tab) => {
+    const dim = dr.dimensions[tab.key];
+    if (!dim) return `<button class="tag-btn" data-tab="${tab.key}">${tab.label}</button>`;
+    const cls = dim.status === 'ok' ? 'ok' : dim.status === 'warning' ? 'warning' : 'danger';
+    return `<button class="tag-btn" data-tab="${tab.key}">
+      ${tab.label}
+      <span class="tag-score ${cls}">${dim.score}/${dim.maxScore}</span>
+    </button>`;
+  }).join('');
+
+  bar.querySelectorAll('.tag-btn').forEach((btn) => {
+    btn.addEventListener('click', () => openModal(btn.dataset.tab));
+  });
+}
+
+// ---- 模块 1: 诊断报告 ----
+function renderDiagnostic(dr, display) {
+  const body = $('diagnosticBody');
+  if (!body) return;
+  if (!dr) { body.innerHTML = '<p style="color:var(--text-muted)">无诊断数据</p>'; return; }
+
+  const score = dr.overallScore || 0;
+  const badge = getScoreBadge(score);
+  const summary = display?.matchSummary?.overallConclusion || dr.optimizationPotential || '';
+
+  let dimBars = '';
+  if (dr.dimensions) {
+    const order = ['jdMatch', 'quantification', 'structure', 'language', 'ats'];
+    for (const key of order) {
+      const d = dr.dimensions[key];
+      if (!d) continue;
+      const pct = Math.round((d.score / d.maxScore) * 100);
+      const cls = d.status === 'ok' ? 'ok' : d.status === 'warning' ? 'warning' : 'danger';
+      dimBars += `
+        <div class="dim-bar-row">
+          <div class="dim-bar-header">
+            <span>${d.label}</span>
+            <span>${d.score}/${d.maxScore}</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill ${cls}" style="width:${pct}%"></div></div>
+        </div>`;
+    }
+  }
+
+  body.innerHTML = `
+    <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap">
+      <span class="score-number">${score}</span>
+      <div>
+        <span class="score-badge ${badge.cls}">${badge.label}</span>
+        <p class="score-summary">${escapeHTML(summary)}</p>
+      </div>
+    </div>
+    <div class="dim-bars">${dimBars}</div>`;
+
+  // countUp 动画
+  animateCountUp(body.querySelector('.score-number'), score);
+}
+
+function animateCountUp(el, target) {
+  if (!el) return;
+  const duration = 1500;
+  const start = performance.now();
+  function tick(now) {
+    const p = Math.min((now - start) / duration, 1);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = Math.round(eased * target);
+    if (p < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+function getScoreBadge(score) {
+  if (score >= 85) return { label: '优秀', cls: 'excellent' };
+  if (score >= 70) return { label: '良好', cls: 'good' };
+  if (score >= 50) return { label: '一般', cls: 'fair' };
+  return { label: '需优化', cls: 'poor' };
+}
+
+// ---- 模块 2: 匹配点与风险 ----
+function renderMatchAnalysis(display) {
+  const grid = $('matchGrid');
+  if (!grid) return;
+
+  const ms = display?.matchSummary;
+  if (!ms) { grid.innerHTML = '<p style="color:var(--text-muted)">无匹配数据</p>'; return; }
+
+  const strongHTML = (ms.strongestMatches || []).map((s) =>
+    `<div class="item-card success">${escapeHTML(s)}</div>`
+  ).join('');
+
+  const riskHTML = (ms.riskOrGaps || []).map((s) =>
+    `<div class="item-card danger">${escapeHTML(s)}</div>`
+  ).join('');
+
+  grid.innerHTML = `
+    <div>
+      <h3 class="match-col-title green">匹配优势</h3>
+      ${strongHTML || '<p style="color:var(--text-muted);font-size:13px">暂无</p>'}
+    </div>
+    <div>
+      <h3 class="match-col-title red">风险与差距</h3>
+      ${riskHTML || '<p style="color:var(--text-muted);font-size:13px">暂无</p>'}
+    </div>`;
+}
+
+// ---- 模块 3: 经历展示 ----
+function renderExperiences(display) {
+  const list = $('experienceList');
+  if (!list) return;
+
+  const exps = display?.experienceShowcase;
+  if (!exps?.length) { list.innerHTML = '<p style="color:var(--text-muted)">无经历数据</p>'; return; }
+
+  list.innerHTML = exps.map((exp) => {
+    const skillsHTML = (exp.highlightedSkills || []).map((s) =>
+      `<span class="keyword-tag">${escapeHTML(s)}</span>`
+    ).join('');
+
+    return `
+      <div class="item-card info">
+        <div class="item-card-title">${escapeHTML(exp.name || '')}</div>
+        <p>${escapeHTML(exp.optimizedDescription || '')}</p>
+        ${skillsHTML ? `<div style="margin-top:8px">${skillsHTML}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+// ---- 模块 4: 面试亮点 ----
+function renderInterview(display) {
+  const body = $('interviewBody');
+  if (!body) return;
+
+  const highlights = display?.interviewHighlights || [];
+  const missing = display?.missingInfoSuggestions || [];
+
+  const hHTML = highlights.map((h) => `<div class="item-card info">${escapeHTML(h)}</div>`).join('');
+  const mHTML = missing.map((m) => `<div class="item-card warning">${escapeHTML(m)}</div>`).join('');
+
+  body.innerHTML = `
+    ${highlights.length ? `<h3 style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:10px">面试可说的亮点</h3>${hHTML}` : ''}
+    ${missing.length ? `<h3 style="font-size:13px;font-weight:700;color:var(--warning);margin-top:16px;margin-bottom:10px">建议补充信息</h3>${mHTML}` : ''}
+    ${!highlights.length && !missing.length ? '<p style="color:var(--text-muted)">无面试建议</p>' : ''}`;
+}
+
+// ---- 模块 5: 自我介绍 ----
+function renderSelfIntro(display) {
+  const body = $('introBody');
+  if (!body) return;
+
+  const intro = display?.finalSelfIntroduction || '';
+  if (!intro) { body.innerHTML = '<p style="color:var(--text-muted)">无自我介绍</p>'; return; }
+
+  const short = intro.slice(0, 300);
+
+  body.innerHTML = `
+    <div class="intro-section">
+      <div class="intro-header">
+        <span class="intro-label">1 分钟版本</span>
+        <button class="copy-btn" data-copy="${escapeAttr(short)}">复制</button>
+      </div>
+      <div class="greeting-box">${escapeHTML(short)}</div>
+    </div>
+    <div class="intro-section">
+      <div class="intro-header">
+        <span class="intro-label">3 分钟版本</span>
+        <button class="copy-btn" data-copy="${escapeAttr(intro)}">复制</button>
+      </div>
+      <div class="greeting-box">${escapeHTML(intro)}</div>
+    </div>`;
+
+  body.querySelectorAll('.copy-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      copyText(btn.dataset.copy);
+      btn.textContent = '已复制!';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = '复制'; btn.classList.remove('copied'); }, 1500);
+    });
+  });
+}
+
+// ---- 模块 6: HR 打招呼 ----
+function renderGreeting() {
+  const body = $('greetingBody');
+  if (!body) return;
+
+  const styles = ['稳重正式', '干练简洁', '温和真诚'];
+  const tabs = [
+    { key: 'short', label: '精简版' },
+    { key: 'full', label: '完整版' },
+    { key: 'jd_matched', label: 'JD 强匹配版' },
+  ];
+
+  body.innerHTML = `
+    <div class="style-bar">
+      ${styles.map((s) => `<button class="style-btn ${s === greetingStyle ? 'active' : ''}" data-style="${s}">${s}</button>`).join('')}
+    </div>
+    <button class="primary-btn" id="greetingGenBtn">生成打招呼话术</button>
+    <div id="greetingResult" style="display:none;margin-top:16px">
+      <div class="tab-bar" id="greetingTabs">
+        ${tabs.map((t) => `<button class="tab-btn ${t.key === greetingTab ? 'active' : ''}" data-tab="${t.key}">${t.label}</button>`).join('')}
+      </div>
+      <div class="greeting-box" id="greetingText"></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:12px">
+        <button class="copy-btn" id="greetingCopyBtn">复制</button>
+      </div>
+    </div>`;
+
+  // 事件
+  body.querySelectorAll('.style-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      greetingStyle = btn.dataset.style;
+      body.querySelectorAll('.style-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+
+  const genBtn = body.querySelector('#greetingGenBtn');
+  if (genBtn) {
+    genBtn.addEventListener('click', handleGenerateGreeting);
+  }
+
+  body.querySelectorAll('#greetingTabs .tab-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      greetingTab = btn.dataset.tab;
+      body.querySelectorAll('#greetingTabs .tab-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      updateGreetingText();
+    });
+  });
+
+  const copyBtn = body.querySelector('#greetingCopyBtn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      const text = greetingData?.[greetingTab] || '';
+      if (text) {
+        copyText(text);
+        copyBtn.textContent = '已复制!';
+        copyBtn.classList.add('copied');
+        setTimeout(() => { copyBtn.textContent = '复制'; copyBtn.classList.remove('copied'); }, 1500);
+      }
+    });
+  }
+}
+
+async function handleGenerateGreeting() {
+  const jdText = $('jdTextarea')?.value?.trim() || '';
+  if (!resumeText && !currentDocxBase64) {
+    showToast('请先上传简历');
+    return;
+  }
+  if (!jdText) {
+    showToast('请填写 JD');
+    return;
+  }
+
+  const btn = document.querySelector('#greetingGenBtn');
+  if (btn) { btn.textContent = '生成中...'; btn.disabled = true; }
+
+  try {
+    const res = await fetch('/api/generate-greeting', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resume: resumeText || '简历已上传', jd: jdText, style: greetingStyle }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || '生成失败');
+    }
+
+    greetingData = await res.json();
+    const resultDiv = document.querySelector('#greetingResult');
+    if (resultDiv) resultDiv.style.display = '';
+    updateGreetingText();
+  } catch (err) {
+    showToast(err.message);
+  } finally {
+    if (btn) { btn.textContent = '生成打招呼话术'; btn.disabled = false; }
+  }
+}
+
+function updateGreetingText() {
+  const el = document.querySelector('#greetingText');
+  if (el && greetingData) {
+    el.textContent = greetingData[greetingTab] || '';
+  }
+}
+
+// ---- 弹窗 ----
+function openModal(tabKey) {
+  const overlay = $('modalOverlay');
+  const content = $('modalContent');
+  if (!overlay || !content || !currentResult?.diagnosticReport) return;
+
+  const dr = currentResult.diagnosticReport;
+  const dim = dr.dimensions?.[tabKey];
+  const labels = {
+    jdMatch: '技能匹配',
+    quantification: '经验匹配',
+    structure: '学历匹配',
+    ats: '综合评分',
+  };
+
+  const statusMap = {
+    ok: { label: '良好', cls: 'ok' },
+    warning: { label: '待优化', cls: 'warning' },
+    danger: { label: '需关注', cls: 'danger' },
+  };
+
+  if (dim) {
+    const s = statusMap[dim.status] || statusMap.warning;
+    const pct = Math.round((dim.score / dim.maxScore) * 100);
+    content.innerHTML = `
+      <p class="modal-kicker">Resume Analysis</p>
+      <h2 class="modal-title">四维匹配分析</h2>
+      <div class="modal-dim-detail">
+        <div class="modal-dim-header">
+          <span class="modal-dim-label">${dim.label}</span>
+          <span class="status-tag ${s.cls}">${s.label}</span>
+        </div>
+        <div class="progress-bar" style="margin-bottom:14px">
+          <div class="progress-fill ${s.cls}" style="width:${pct}%"></div>
+        </div>
+        <p>${escapeHTML(dim.detail || '')}</p>
+      </div>`;
+  } else {
+    // 显示总览
+    const ms = currentResult.display?.matchSummary;
+    let html = `
+      <p class="modal-kicker">Resume Analysis</p>
+      <h2 class="modal-title">四维匹配分析</h2>
+      <div class="tab-bar" style="margin-bottom:20px">`;
+    for (const [key, label] of Object.entries(labels)) {
+      const d = dr.dimensions?.[key];
+      const cls2 = d ? (d.status === 'ok' ? 'ok' : d.status === 'warning' ? 'warning' : 'danger') : '';
+      html += `<button class="tag-btn modal-tag" data-key="${key}" style="font-size:12px;padding:8px 14px">
+        ${label}${d ? `<span class="tag-score ${cls2}">${d.score}/${d.maxScore}</span>` : ''}
+      </button>`;
+    }
+    html += '</div>';
+
+    if (ms) {
+      if (ms.strongestMatches?.length) {
+        html += '<h3 style="font-size:14px;font-weight:700;color:var(--success);margin-bottom:10px">匹配优势</h3>';
+        html += ms.strongestMatches.map((s) => `<div class="item-card success" style="font-size:13px">${escapeHTML(s)}</div>`).join('');
+      }
+      if (ms.riskOrGaps?.length) {
+        html += '<h3 style="font-size:14px;font-weight:700;color:var(--danger);margin:16px 0 10px">风险与差距</h3>';
+        html += ms.riskOrGaps.map((s) => `<div class="item-card danger" style="font-size:13px">${escapeHTML(s)}</div>`).join('');
+      }
+    }
+
+    if (!ms?.strongestMatches?.length && !ms?.riskOrGaps?.length) {
+      html += '<p style="text-align:center;color:var(--text-muted);padding:24px">点击上方标签查看各维度详情</p>';
+    }
+
+    html += '</div>';
+    content.innerHTML = html;
+
+    // 绑定弹窗内标签点击
+    setTimeout(() => {
+      content.querySelectorAll('.modal-tag').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const key = btn.dataset.key;
+          const d2 = dr.dimensions?.[key];
+          if (!d2) return;
+          const s2 = statusMap[d2.status] || statusMap.warning;
+          const pct2 = Math.round((d2.score / d2.maxScore) * 100);
+
+          // 替换为维度详情
+          const detailDiv = content.querySelector('.modal-dim-detail');
+          if (detailDiv) detailDiv.remove();
+
+          const tagBar = content.querySelector('.tab-bar');
+          const newDetail = document.createElement('div');
+          newDetail.className = 'modal-dim-detail';
+          newDetail.innerHTML = `
+            <div class="modal-dim-header">
+              <span class="modal-dim-label">${d2.label}</span>
+              <span class="status-tag ${s2.cls}">${s2.label}</span>
+            </div>
+            <div class="progress-bar" style="margin-bottom:14px">
+              <div class="progress-fill ${s2.cls}" style="width:${pct2}%"></div>
+            </div>
+            <p>${escapeHTML(d2.detail || '')}</p>`;
+          tagBar.after(newDetail);
+        });
+      });
+    }, 0);
+  }
+
+  overlay.style.display = '';
+  overlay.classList.remove('leaving');
+  overlay.classList.add('entering');
+  const card = overlay.querySelector('.modal-card');
+  if (card) { card.classList.remove('leaving'); card.classList.add('entering'); }
+}
+
+function closeModal() {
+  const overlay = $('modalOverlay');
+  if (!overlay) return;
+  overlay.classList.remove('entering');
+  overlay.classList.add('leaving');
+  const card = overlay.querySelector('.modal-card');
+  if (card) { card.classList.remove('entering'); card.classList.add('leaving'); }
+  setTimeout(() => { overlay.style.display = 'none'; overlay.classList.remove('leaving'); }, 220);
+}
+
+// ---- 工具函数 ----
 function escapeHTML(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -741,4 +649,30 @@ function escapeHTML(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function escapeAttr(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '&#10;');
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+  showToast('已复制');
 }

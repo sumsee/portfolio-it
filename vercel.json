@@ -4,7 +4,8 @@
   "installCommand": "",
   "rewrites": [
     { "source": "/api/match", "destination": "/api/match" },
-    { "source": "/api/generate-docx", "destination": "/api/generate-docx" }
+    { "source": "/api/generate-docx", "destination": "/api/generate-docx" },
+    { "source": "/api/generate-greeting", "destination": "/api/generate-greeting" }
   ],
   "headers": [
     {
@@ -22,6 +23,10 @@
       "memory": 1024
     },
     "api/generate-docx.py": {
+      "maxDuration": 180,
+      "memory": 1024
+    },
+    "api/generate-greeting.js": {
       "maxDuration": 180,
       "memory": 1024
     }
