@@ -1,9 +1,97 @@
 // app.js — 简历智能分析主控逻辑
-// cs2analysis 风格 UI + 6 模块卡片布局 + HR 打招呼 + 四维弹窗
+// 前端直接调用 DeepSeek API，无需后端
 
-// ---- API 后端地址 ----
-// GitHub Pages 前端 → Vercel 后端 API
-const API_BASE = 'https://portfolio-poo386cwa-barry-s-projects3.vercel.app';
+const DEEPSEEK_API = 'https://api.deepseek.com/v1/chat/completions';
+const DEEPSEEK_KEY = 'sk-88d41f720f3f45259766450b686fd7b0';
+
+// ---- 简历分析 System Prompt ----
+const MATCH_SYSTEM_PROMPT = `你是一位资深 HRBP + 招聘经理 + 简历优化专家。
+对比候选人简历与目标岗位 JD，同时生成三个输出：
+1. diagnosticReport：五维度诊断报告（100分制）
+2. display：岗位定制个人展示页 JSON
+3. optimizations：简历逐段修改建议
+
+## 五维度评分（100分制）
+1. JD匹配度（40分）：硬技能覆盖率15 + 软技能匹配10 + 行业经验10 + 关键词密度5
+2. 量化成果（25分）：数据支撑15 + 成果导向10
+3. 结构与逻辑（15分）：信息层级8 + STAR原则7
+4. 语言专业度（10分）：动词强度5 + 简洁性5
+5. ATS友好度（10分）：格式规范5 + 关键词布局5
+
+## STAR 原则
+每段经历按 S(情境)-T(任务)-A(行动)-R(成果) 重组
+弱动词→强动词：负责→主导，做了→设计，尝试→引入
+
+## 低分策略（overallScore<60时强制执行）
+对每段经历分级：
+- A级（强相关）：STAR完整重写至4-6要点，大量植入JD关键词，补充量化数据，experienceShowcase置顶
+- B级（弱相关）：保留2-3要点，适当植入关键词，居中展示
+- C级（不相关）：压缩至1-2行，删除无关细节，末尾展示
+
+## 删除原则
+删除：空洞自我评价、过时技术、无关经历、冗余描述
+
+## 输出要求
+只返回合法 JSON，不要任何其他文字。
+
+## JSON Schema
+{
+  "diagnosticReport": {
+    "overallScore": 68,
+    "overallStar": "⭐⭐⭐",
+    "dimensions": {
+      "jdMatch": {"score": 25, "maxScore": 40, "label": "JD 匹配度", "status": "warning", "detail": "..."},
+      "quantification": {"score": 12, "maxScore": 25, "label": "量化成果", "status": "warning", "detail": "..."},
+      "structure": {"score": 11, "maxScore": 15, "label": "结构与逻辑", "status": "ok", "detail": "..."},
+      "language": {"score": 6, "maxScore": 10, "label": "语言专业度", "status": "warning", "detail": "..."},
+      "ats": {"score": 8, "maxScore": 10, "label": "ATS 友好度", "status": "ok", "detail": "..."}
+    },
+    "strengths": ["优势1", "优势2"],
+    "criticalIssues": ["问题1", "问题2"],
+    "optimizationPotential": "预计可提升至 XX 分"
+  },
+  "display": {
+    "hero": {"title": "...", "positioning": "...", "tags": ["标签1","标签2","标签3","标签4","标签5"], "summary": "..."},
+    "matchSummary": {"overallConclusion": "...", "strongestMatches": ["..."], "riskOrGaps": ["..."]},
+    "abilityQualificationMatch": {"conclusion": "...", "evidence": [{"title":"...","optimizedDescription":"...","highlightedSkills":["..."],"matchedJDRequirements":["..."],"improvementSuggestions":["..."]}]},
+    "visionPlanningMatch": {"conclusion": "...", "evidence": [...]},
+    "statusFitMatch": {"conclusion": "...", "evidence": [...]},
+    "qualityCharacterMatch": {"conclusion": "...", "evidence": [...]},
+    "experienceShowcase": [{"name":"...","optimizedDescription":"...","highlightedSkills":["..."],"matchedJDRequirements":["..."],"improvementSuggestions":["..."]}],
+    "interviewHighlights": ["亮点1","亮点2","亮点3"],
+    "missingInfoSuggestions": ["建议1","建议2"],
+    "finalSelfIntroduction": "200-350字自我介绍",
+    "pagePlan": {"originalWordCount":"...","optimizedWordCount":"...","onePageLimit":700,"currentFit":"fit","overflowAmount":"...","deletionTargets":["..."],"note":"..."}
+  },
+  "optimizations": [
+    {"old_text": "简历原文逐字匹配", "new_text": "优化后文本", "comment": "修改说明", "modification_type": "关键词优化+量化成果", "length_ratio": 1.0}
+  ]
+}
+
+## 关键要求
+- diagnosticReport 五维度评分
+- display 完整展示页
+- optimizations 覆盖每个段落，至少8-15条
+- old_text 必须与原文逐字精确匹配
+- 全面重写不是表面润色`;
+
+// ---- HR 打招呼 Prompt ----
+const GREETING_PROMPT = `你是一个专业的求职顾问。根据以下规则生成 HR 打招呼话术。
+
+【强制规则】
+1. 身份：从简历判断是应届生、在职跳槽还是转行人员，全文统一。
+2. 能力佐证：每条能力必须跟在学历/证书/实习/项目/成果后面。禁止无证据空话。
+3. 语序：问候→自我介绍和求职意向→核心匹配优势→收尾邀约。亮点前置。
+4. 篇幅：精简版2-3行，完整版4-5行。不超行数。
+5. JD关键词：提取2-3个高频关键词自然嵌入。
+
+【风格】
+- 稳重正式：正式简洁，适用于国企、传统行业
+- 干练简洁：务实直接，适用于互联网、技术岗
+- 温和真诚：自然真诚，适用于文职、服务类
+
+严格按 JSON 返回，不要其他内容：
+{"short": "精简版", "full": "完整版", "jd_matched": "JD强匹配版"}`;
 
 // ---- 状态 ----
 let currentFile = null;
@@ -17,6 +105,44 @@ let resumeText = '';
 let greetingData = null;
 let greetingTab = 'short';
 let greetingStyle = '干练简洁';
+
+// ---- DeepSeek API 直接调用 ----
+
+async function callDeepSeek(messages, maxTokens = 32768) {
+  const res = await fetch(DEEPSEEK_API, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${DEEPSEEK_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'deepseek-chat',
+      max_tokens: maxTokens,
+      response_format: { type: 'json_object' },
+      messages,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`DeepSeek API 错误 (${res.status}): ${err.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error('AI 返回内容为空');
+  return content;
+}
+
+function parseAIResponse(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    throw new Error('AI 返回格式异常，请重试');
+  }
+}
 
 // ---- DOM ----
 const $ = (id) => document.getElementById(id);
@@ -229,28 +355,12 @@ async function handleGenerate() {
   $('resultArea').style.display = 'none';
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180000);
+    const raw = await callDeepSeek([
+      { role: 'system', content: MATCH_SYSTEM_PROMPT },
+      { role: 'user', content: `## 候选人简历（原始文本）\n\n${resumeText}\n\n## 目标岗位 JD\n\n${jdText}\n\n## 任务\n\n请根据以上简历和 JD，生成包含 diagnosticReport、display 和 optimizations 三个字段的完整 JSON。\n关键要求：optimizations 必须覆盖简历中每一个段落，至少 8-15 条；old_text 必须与原文逐字匹配。` },
+    ]);
 
-    const res = await fetch(`${API_BASE}/api/match`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(
-        currentDocxBase64
-          ? { docx: currentDocxBase64, jd: jdText }
-          : { resumeText: resumeText, jd: jdText }
-      ),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.message || `请求失败 (${res.status})`);
-    }
-
-    currentResult = await res.json();
+    currentResult = parseAIResponse(raw);
     currentOptimizations = currentResult.optimizations || [];
     currentApiDocxBase64 = currentResult.docxBase64 || null;
 
@@ -259,15 +369,6 @@ async function handleGenerate() {
     $('loadingContainer').style.display = 'none';
     $('resultArea').style.display = '';
 
-    // 显示下载按钮（有优化建议且是 DOCX 模式）
-    const toolbar = $('resultToolbar');
-    const dlBtn = $('downloadDocxBtn');
-    if (toolbar && dlBtn && currentOptimizations.length > 0 && currentApiDocxBase64) {
-      toolbar.style.display = '';
-      dlBtn.style.display = '';
-      dlBtn.addEventListener('click', handleDownloadDocx);
-    }
-
     // 触发 stagger 动画
     document.querySelectorAll('.stagger-card').forEach((el, i) => {
       el.style.animationDelay = `${i * 0.1}s`;
@@ -275,7 +376,7 @@ async function handleGenerate() {
   } catch (err) {
     $('loadingContainer').style.display = 'none';
     $('uploadSection').style.display = '';
-    showError(err.name === 'AbortError' ? '请求超时，请重试' : err.message);
+    showError(err.message);
   }
 }
 
@@ -678,18 +779,12 @@ async function handleGenerateGreeting() {
   if (btn) { btn.textContent = '生成中...'; btn.disabled = true; }
 
   try {
-    const res = await fetch(`${API_BASE}/api/generate-greeting`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ resume: resumeText || '简历已上传', jd: jdText, style: greetingStyle }),
-    });
+    const raw = await callDeepSeek([
+      { role: 'system', content: GREETING_PROMPT },
+      { role: 'user', content: `【简历内容】\n${resumeText || '简历已上传'}\n\n【JD 内容】\n${jdText}\n\n【指定风格】\n${greetingStyle}` },
+    ], 4096);
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || '生成失败');
-    }
-
-    greetingData = await res.json();
+    greetingData = parseAIResponse(raw);
     const resultDiv = document.querySelector('#greetingResult');
     if (resultDiv) resultDiv.style.display = '';
     updateGreetingText();
