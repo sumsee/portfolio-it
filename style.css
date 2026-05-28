@@ -518,6 +518,25 @@ body {
   margin: 2px 4px 2px 0;
 }
 
+/* 经历修改说明 */
+.exp-change-note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: rgba(79,128,255,0.04);
+  border-radius: 8px;
+  border-left: 3px solid var(--accent);
+}
+.exp-change-line {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.exp-change-label {
+  font-weight: 700;
+  color: var(--text-main);
+}
+
 /* ===== 自我介绍 ===== */
 .intro-section { margin-bottom: 16px; }
 .intro-header {

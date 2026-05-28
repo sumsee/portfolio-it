@@ -459,7 +459,33 @@ async function handleGenerate() {
   }
 }
 
-// ---- 下载优化简历 DOCX（客户端 JSZip 实现） ----
+// ---- 下载优化简历 DOCX（客户端 JSZip + 批注） ----
+
+function escapeXml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function buildSummaryXml(opts) {
+  let runs = '';
+  // 标题
+  runs += '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>优化修改说明</w:t></w:r></w:p>';
+  // 每条优化
+  for (let i = 0; i < opts.length; i++) {
+    const o = opts[i];
+    const oldText = (o.old_text || '').trim().slice(0, 200);
+    const newText = (o.new_text || '').trim().slice(0, 200);
+    const comment = (o.comment || '').replace(/\n/g, ' ').trim().slice(0, 300);
+    if (!oldText) continue;
+    runs += `<w:p><w:r><w:t>第${i + 1}条</w:t></w:r></w:p>`;
+    runs += `<w:p><w:r><w:rPr><w:color w:val="CC0000"/></w:rPr><w:t>原文：${escapeXml(oldText)}</w:t></w:r></w:p>`;
+    runs += `<w:p><w:r><w:rPr><w:color w:val="008000"/></w:rPr><w:t>优化后：${escapeXml(newText)}</w:t></w:r></w:p>`;
+    if (comment) {
+      runs += `<w:p><w:r><w:t>修改原因：${escapeXml(comment)}</w:t></w:r></w:p>`;
+    }
+    runs += '<w:p/>'; // 空行
+  }
+  return runs;
+}
 
 async function handleDownloadDocx() {
   const btn = $('downloadDocxBtn');
@@ -490,41 +516,57 @@ async function handleDownloadDocx() {
     const bytes = new Uint8Array(binaryStr.length);
     for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
 
-    // 用 JSZip 解压 DOCX
     const zip = await JSZip.loadAsync(bytes.buffer);
-
-    // 读取 document.xml
     const docFile = zip.file('word/document.xml');
     if (!docFile) throw new Error('无法读取 DOCX 内容');
     let xml = await docFile.async('string');
 
-    // 逐条应用优化替换
+    // 把 XML 中 <w:p> 段落内的所有 <w:t> 文本拼接，匹配后替换
     let replaced = 0;
-    for (const opt of currentOptimizations) {
-      const oldText = (opt.old_text || '').trim();
-      const newText = (opt.new_text || '').trim();
-      if (!oldText) continue;
+    const paraRegex = /<w:p\b[^>]*>([\s\S]*?)<\/w:p>/g;
+    let match;
 
-      // 在 XML 中查找原文（可能被 <w:t> 标签分割）
-      const escaped = oldText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      // 尝试多种匹配方式
-      if (xml.includes(oldText)) {
-        xml = xml.split(oldText).join(newText);
-        replaced++;
-      } else {
-        // 尝试忽略 XML 标签的模糊匹配
-        const pattern = oldText.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s\\S]{0,30}');
-        try {
-          const re = new RegExp(pattern, 'g');
-          if (re.test(xml)) {
-            xml = xml.replace(re, newText);
+    while ((match = paraRegex.exec(xml)) !== null) {
+      const paraFull = match[0];
+      const paraInner = match[1];
+
+      // 提取段落内所有纯文本
+      const textParts = [];
+      const tRegex = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
+      let tm;
+      while ((tm = tRegex.exec(paraInner)) !== null) {
+        textParts.push(tm[1]);
+      }
+      const paraText = textParts.join('');
+
+      // 尝试匹配每条优化
+      for (const opt of currentOptimizations) {
+        const oldText = (opt.old_text || '').trim();
+        const newText = (opt.new_text || '').trim();
+        if (!oldText || oldText.length < 6) continue;
+
+        if (paraText.includes(oldText)) {
+          // 找到了！替换第一个 <w:t> 的部分文本，其余清空
+          const firstT = paraInner.match(/<w:t[^>]*>[\s\S]*?<\/w:t>/);
+          if (firstT) {
+            const newXml = paraFull.replace(firstT[0], firstT[0].replace(/<w:t[^>]*>([\s\S]*?)<\/w:t>/, `<w:t xml:space="preserve">${escapeXml(newText)}</w:t>`));
+            // 清空段落内其他 <w:t>
+            const cleaned = newXml.replace(/(<w:t[^>]*>)([\s\S]*?)(<\/w:t>)/g, (m, open, content, close, offset) => {
+              if (m === newXml.match(/<w:t[^>]*>[\s\S]*?<\/w:t>/)?.[0]) return m;
+              return open + close;
+            });
+            xml = xml.replace(paraFull, cleaned);
             replaced++;
+            break;
           }
-        } catch {}
+        }
       }
     }
 
-    // 写回 document.xml
+    // 在文档末尾追加"优化修改说明"
+    const summaryXml = buildSummaryXml(currentOptimizations);
+    xml = xml.replace(/<\/w:body>/, summaryXml + '</w:body>');
+
     zip.file('word/document.xml', xml);
 
     // 生成新 DOCX
@@ -740,38 +782,52 @@ function renderExperiences(display) {
 
   const opts = currentResult?.optimizations || [];
 
-  // 经历卡片
   let html = exps.map((exp) => {
     const skillsHTML = (exp.highlightedSkills || []).map((s) =>
       `<span class="keyword-tag">${escapeHTML(s)}</span>`
     ).join('');
+
+    // 找到与这段经历最相关的优化项
+    const expDesc = (exp.optimizedDescription || '').slice(0, 30);
+    const related = opts.find((o) => {
+      const cmt = (o.comment || '');
+      return cmt.includes(expDesc) || cmt.includes(exp.name || '') ||
+        (o.new_text || '').includes(expDesc);
+    }) || opts.shift();
+
+    let changeHTML = '';
+    if (related) {
+      const oldShort = escapeHTML((related.old_text || '').slice(0, 120));
+      const benefit = extractBenefit(related.comment || '');
+      changeHTML = `
+        <div class="exp-change-note">
+          <div class="exp-change-line"><span class="exp-change-label">改了什么：</span>${oldShort} → 优化版</div>
+          <div class="exp-change-line"><span class="exp-change-label">改的好处：</span>${escapeHTML(benefit)}</div>
+        </div>`;
+    }
+
     return `
       <div class="item-card info">
         <div class="item-card-title">${escapeHTML(exp.name || '')}</div>
         <p>${escapeHTML(exp.optimizedDescription || '')}</p>
         ${skillsHTML ? `<div style="margin-top:8px">${skillsHTML}</div>` : ''}
+        ${changeHTML}
       </div>`;
   }).join('');
 
-  // 全部优化对比
-  if (opts.length) {
-    html += `<h3 style="font-size:14px;font-weight:700;color:var(--accent);margin:20px 0 12px">修改对比（${opts.length} 条）</h3>`;
-    html += opts.slice(0, 15).map((o) => {
-      const oldText = escapeHTML((o.old_text || '').slice(0, 300));
-      const newText = escapeHTML((o.new_text || '').slice(0, 300));
-      const comment = escapeHTML((o.comment || '').slice(0, 400));
-      return `
-        <div class="exp-diff-item">
-          <div class="exp-diff-row">
-            <div class="exp-diff-old"><span class="diff-label">原文</span>${oldText}</div>
-            <div class="exp-diff-new"><span class="diff-label">优化后</span>${newText}</div>
-          </div>
-          ${comment ? `<div class="exp-diff-comment">${comment}</div>` : ''}
-        </div>`;
-    }).join('');
-  }
-
   list.innerHTML = html;
+}
+
+// 从 comment 中提取修改原因/好处
+function extractBenefit(comment) {
+  // 尝试找"优化逻辑"后面的内容
+  const logicMatch = comment.match(/优化逻辑[】\]】]?\s*[\n•]+([\s\S]*?)(?=【匹配度|$)/);
+  if (logicMatch) return logicMatch[1].trim().slice(0, 150);
+  // 尝试找"修改类型"和关键描述
+  const typeMatch = comment.match(/【修改类型】([\s\S]*?)(?=【|$)/);
+  if (typeMatch) return typeMatch[1].trim().slice(0, 150);
+  // 取前150字符
+  return comment.replace(/\n/g, ' ').slice(0, 150);
 }
 
 // ---- 模块 4: 面试亮点 ----
