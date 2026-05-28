@@ -503,3 +503,192 @@ body {
     from { opacity: 0; transform: translateY(30px); }
     to { opacity: 1; transform: translateY(0); }
 }
+
+/* ============================================
+   9. 诊断报告横幅
+   ============================================ */
+
+.diagnostic-banner {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    border: 1px solid rgba(48, 209, 88, 0.2);
+    border-radius: 16px;
+    padding: 28px 32px;
+    margin-bottom: 32px;
+    animation: fadeInUp 0.5s ease;
+}
+
+.diagnostic-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.diagnostic-header h2 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #30d158;
+    margin: 0;
+}
+
+.diagnostic-overall {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.overall-score {
+    font-size: 42px;
+    font-weight: 800;
+    color: #ffffff;
+    line-height: 1;
+}
+
+.overall-score small {
+    font-size: 18px;
+    font-weight: 500;
+    color: #86868b;
+}
+
+.overall-star {
+    font-size: 24px;
+}
+
+.diagnostic-body h4 {
+    font-size: 14px;
+    font-weight: 600;
+    color: #86868b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 12px;
+}
+
+/* 评分条 */
+.score-section {
+    margin-bottom: 24px;
+}
+
+.score-row {
+    margin-bottom: 14px;
+}
+
+.score-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.score-icon {
+    font-size: 14px;
+    width: 20px;
+    text-align: center;
+}
+
+.score-label span:nth-child(2) {
+    font-size: 14px;
+    font-weight: 500;
+    color: #e5e5e7;
+    flex: 1;
+}
+
+.score-num {
+    font-size: 13px;
+    font-weight: 600;
+    color: #30d158;
+    font-variant-numeric: tabular-nums;
+}
+
+.score-bar-track {
+    height: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 4px;
+}
+
+.score-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.8s ease;
+}
+
+.bar-green { background: linear-gradient(90deg, #30d158, #30d158); }
+.bar-yellow { background: linear-gradient(90deg, #ff9f0a, #ff9f0a); }
+.bar-red { background: linear-gradient(90deg, #ff3b30, #ff3b30); }
+
+.score-detail {
+    font-size: 12px;
+    color: #86868b;
+    padding-left: 28px;
+}
+
+/* 优劣网格 */
+.diagnostic-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 24px;
+}
+
+.diagnostic-col {
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.diagnostic-col ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.diagnostic-col li {
+    font-size: 14px;
+    color: #c9c9cd;
+    padding: 6px 0;
+    padding-left: 16px;
+    position: relative;
+}
+
+.diagnostic-col li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 12px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+}
+
+.diagnostic-col:first-child li::before {
+    background: #30d158;
+}
+
+.diagnostic-col:last-child li::before {
+    background: #ff9f0a;
+}
+
+/* 优化潜力 */
+.diagnostic-potential {
+    background: rgba(48, 209, 88, 0.08);
+    border: 1px solid rgba(48, 209, 88, 0.15);
+    border-radius: 12px;
+    padding: 14px 20px;
+}
+
+.diagnostic-potential p {
+    font-size: 15px;
+    color: #30d158;
+    margin: 0;
+    font-weight: 500;
+}
+
+@media (max-width: 768px) {
+    .diagnostic-banner { padding: 20px; }
+    .diagnostic-header h2 { font-size: 18px; }
+    .overall-score { font-size: 32px; }
+    .diagnostic-grid { grid-template-columns: 1fr; }
+}

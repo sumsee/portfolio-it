@@ -18,11 +18,11 @@
   ],
   "functions": {
     "api/match.js": {
-      "maxDuration": 60,
-      "memory": 512
+      "maxDuration": 180,
+      "memory": 1024
     },
     "api/generate-docx.py": {
-      "maxDuration": 60,
+      "maxDuration": 180,
       "memory": 1024
     }
   }

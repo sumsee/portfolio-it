@@ -175,7 +175,7 @@ const API_GENERATE_DOCX = '/api/generate-docx';
 
 async function callMatchAPI(body) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000);
+  const timeoutId = setTimeout(() => controller.abort(), 180000);
 
   try {
     const response = await fetch(API_MATCH, {
@@ -255,7 +255,8 @@ async function handleGenerate() {
   // 生成阶段
   setUIState(AppState.GENERATING);
   try {
-    // 提取 display 和 optimizations（兼容新旧格式）
+    // 提取 diagnosticReport、display 和 optimizations（兼容新旧格式）
+    const diagnosticReport = result.diagnosticReport || null;
     const display = result.display || result;
     const optimizations = result.optimizations || [];
     const docxBase64 = result.docxBase64 || null;
@@ -263,7 +264,7 @@ async function handleGenerate() {
     currentOptimizations = optimizations;
     currentApiDocxBase64 = docxBase64;
 
-    renderResult(display);
+    renderResult(display, diagnosticReport);
   } catch (err) {
     if (els.loadingSpinner) els.loadingSpinner.style.display = 'none';
     if (els.resultPlaceholder) els.resultPlaceholder.style.display = '';
@@ -309,7 +310,7 @@ async function handleDownloadDocx() {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
 
     const response = await fetch(API_GENERATE_DOCX, {
       method: 'POST',
@@ -380,14 +381,82 @@ function sanitizeFileName(name) {
 
 // ---- 结果渲染 ----
 
-function renderResult(profile) {
+function renderResult(profile, diagnosticReport) {
   currentProfile = profile;
+  if (diagnosticReport) {
+    renderDiagnosticReport(diagnosticReport);
+  }
   renderHero(profile.hero);
   renderSummary(profile.matchSummary);
   renderDimensions(profile);
   renderExperiences(profile.experienceShowcase);
   renderFooter(profile);
   bindCopyButtons();
+}
+
+function renderDiagnosticReport(report) {
+  const el = $('profileHero');
+  if (!el || !report) return;
+
+  const dims = report.dimensions || {};
+  const dimOrder = ['jdMatch', 'quantification', 'structure', 'language', 'ats'];
+  const statusIcons = { ok: '✅', warning: '⚠️', critical: '❌' };
+  const statusLabels = { ok: '良好', warning: '需优化', critical: '严重不足' };
+
+  let dimRows = '';
+  for (const key of dimOrder) {
+    const d = dims[key];
+    if (!d) continue;
+    const pct = Math.round((d.score / d.maxScore) * 100);
+    const barColor = pct >= 75 ? 'bar-green' : pct >= 50 ? 'bar-yellow' : 'bar-red';
+    dimRows += `
+      <div class="score-row">
+        <div class="score-label">
+          <span class="score-icon">${statusIcons[d.status] || '⚠️'}</span>
+          <span>${d.label}</span>
+          <span class="score-num">${d.score}/${d.maxScore}</span>
+        </div>
+        <div class="score-bar-track">
+          <div class="score-bar-fill ${barColor}" style="width:${pct}%"></div>
+        </div>
+        <div class="score-detail">${escapeHTML(d.detail || '')}</div>
+      </div>`;
+  }
+
+  const strengthsHTML = (report.strengths || []).map(s => `<li>${escapeHTML(s)}</li>`).join('');
+  const issuesHTML = (report.criticalIssues || []).map(s => `<li>${escapeHTML(s)}</li>`).join('');
+
+  const container = el.parentNode;
+  const banner = document.createElement('div');
+  banner.className = 'diagnostic-banner';
+  banner.innerHTML = `
+    <div class="diagnostic-header">
+      <h2>📊 简历诊断报告</h2>
+      <div class="diagnostic-overall">
+        <span class="overall-score">${report.overallScore || '--'}<small>/100</small></span>
+        <span class="overall-star">${report.overallStar || ''}</span>
+      </div>
+    </div>
+    <div class="diagnostic-body">
+      <div class="score-section">
+        <h4>五维度评分</h4>
+        ${dimRows}
+      </div>
+      <div class="diagnostic-grid">
+        <div class="diagnostic-col">
+          <h4>✨ 主要优势</h4>
+          <ul>${strengthsHTML || '<li>暂无</li>'}</ul>
+        </div>
+        <div class="diagnostic-col">
+          <h4>⚠️ 关键问题</h4>
+          <ul>${issuesHTML || '<li>暂无</li>'}</ul>
+        </div>
+      </div>
+      <div class="diagnostic-potential">
+        <p>📈 ${escapeHTML(report.optimizationPotential || '')}</p>
+      </div>
+    </div>`;
+  container.insertBefore(banner, el);
 }
 
 function renderHero(hero) {

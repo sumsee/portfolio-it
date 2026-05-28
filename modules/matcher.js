@@ -57,7 +57,7 @@ export async function matchResumeToJD(resumeData, jdText) {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s 超时
+    const timeoutId = setTimeout(() => controller.abort(), 180000); // 180s 超时
 
     try {
         const response = await fetch(API_ENDPOINT, {
@@ -160,7 +160,7 @@ export function getErrorMessage(error) {
         network: '网络连接失败，请检查网络后重试',
         api: error.message,
         parse: 'AI 返回数据异常，请稍后重试',
-        timeout: 'AI 分析超时，JD 内容可能过长，请精简后重试',
+        timeout: 'AI 分析超时，请稍后重试。如持续出现请刷新页面后重试',
     };
 
     return messages[error.type] || error.message;
