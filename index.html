@@ -34,7 +34,20 @@
 
         <div class="field-group">
           <label class="field-label">职位描述（JD）</label>
-          <textarea id="jdTextarea" class="glass-textarea" rows="6" placeholder="粘贴目标岗位的 JD 内容..."></textarea>
+          <div class="jd-input-wrapper">
+            <textarea id="jdTextarea" class="glass-textarea" rows="6" placeholder="粘贴目标岗位的 JD 内容，或上传 JD 截图自动识别..."></textarea>
+            <div class="jd-image-bar">
+              <label class="jd-upload-btn" id="jdUploadBtn">
+                <input type="file" id="jdImageInput" accept="image/*" hidden>
+                上传 JD 截图
+              </label>
+              <span class="jd-upload-status" id="jdUploadStatus"></span>
+            </div>
+            <div class="jd-image-preview" id="jdImagePreview" style="display:none">
+              <img id="jdPreviewImg" alt="JD 截图预览">
+              <button class="jd-remove-img" id="jdRemoveImg">&times;</button>
+            </div>
+          </div>
         </div>
 
         <div class="error-box" id="errorBox" style="display:none"></div>
@@ -119,6 +132,7 @@
 
   <!-- CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="app.js"></script>
 
 </body>
