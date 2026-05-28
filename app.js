@@ -122,7 +122,7 @@ function handleFileSelect(file) {
     hint.classList.add('has-file');
   }
 
-  // DOCX 模式：保存 base64
+  // DOCX 模式：保存 base64 / TXT 模式：读取文本
   const name = file.name.toLowerCase();
   if (name.endsWith('.docx')) {
     file.arrayBuffer().then((buf) => {
@@ -130,6 +130,11 @@ function handleFileSelect(file) {
       let binary = '';
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
       currentDocxBase64 = btoa(binary);
+    });
+  } else if (name.endsWith('.txt')) {
+    currentDocxBase64 = null;
+    file.text().then((text) => {
+      resumeText = text;
     });
   } else {
     currentDocxBase64 = null;
@@ -141,10 +146,13 @@ function handleFileSelect(file) {
 
 async function extractResumeText(file) {
   try {
-    if (typeof mammoth !== 'undefined' && file.name.toLowerCase().endsWith('.docx')) {
+    const name = file.name.toLowerCase();
+    if (typeof mammoth !== 'undefined' && name.endsWith('.docx')) {
       const buf = await file.arrayBuffer();
       const result = await mammoth.extractRawText({ arrayBuffer: buf });
       resumeText = result.value;
+    } else if (name.endsWith('.txt')) {
+      resumeText = await file.text();
     }
   } catch (e) {
     console.warn('简历文本提取失败:', e);
@@ -224,8 +232,8 @@ async function handleJdImageUpload(file) {
 async function handleGenerate() {
   const jdText = $('jdTextarea')?.value?.trim() || '';
 
-  if (!currentDocxBase64) {
-    showError('请先上传 DOCX 简历文件');
+  if (!currentDocxBase64 && !resumeText) {
+    showError('请先上传 DOCX 或 TXT 简历文件');
     return;
   }
   if (!jdText) {
@@ -247,7 +255,11 @@ async function handleGenerate() {
     const res = await fetch(`${API_BASE}/api/match`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ docx: currentDocxBase64, jd: jdText }),
+      body: JSON.stringify(
+        currentDocxBase64
+          ? { docx: currentDocxBase64, jd: jdText }
+          : { resumeText: resumeText, jd: jdText }
+      ),
       signal: controller.signal,
     });
 

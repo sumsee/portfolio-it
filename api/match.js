@@ -715,13 +715,16 @@ export default async function handler(req, res) {
             }
 
             docxBase64 = body.docx;
+        } else if (body.resumeText && (body.jd || body.jdText)) {
+            // ---- TXT 路径（纯文本简历） ----
+            resumeText = body.resumeText;
         } else if (body.resumeData && body.jdText) {
             // ---- 传统路径 (PDF / 默认简历) ----
             resumeText = JSON.stringify(body.resumeData, null, 2);
         } else {
             return res.status(400).json({
                 error: 'Bad Request',
-                message: '请提供 docx+jd（DOCX 路径）或 resumeData+jdText（传统路径）',
+                message: '请提供 docx+jd（DOCX路径）、resumeText+jd（TXT路径）或 resumeData+jdText（传统路径）',
             });
         }
 
