@@ -434,6 +434,17 @@ async function handleGenerate() {
     $('loadingContainer').style.display = 'none';
     $('resultArea').style.display = '';
 
+    // 显示下载按钮
+    if (currentOptimizations.length > 0 && currentDocxBase64) {
+      const toolbar = $('resultToolbar');
+      const dlBtn = $('downloadDocxBtn');
+      if (toolbar && dlBtn) {
+        toolbar.style.display = '';
+        dlBtn.style.display = '';
+        dlBtn.onclick = handleDownloadDocx;
+      }
+    }
+
     // 触发 stagger 动画
     document.querySelectorAll('.stagger-card').forEach((el, i) => {
       el.style.animationDelay = `${i * 0.1}s`;
@@ -445,22 +456,25 @@ async function handleGenerate() {
   }
 }
 
-// ---- 下载优化简历 DOCX ----
+// ---- 下载优化简历 DOCX（客户端 JSZip 实现） ----
 
 async function handleDownloadDocx() {
   const btn = $('downloadDocxBtn');
   if (!btn) return;
 
-  if (!currentApiDocxBase64) {
-    showError('缺少 DOCX 数据，请重新上传并生成');
+  if (!currentDocxBase64) {
+    showError('缺少 DOCX 数据，请重新上传');
     return;
   }
   if (!currentOptimizations.length) {
     showError('没有可应用的优化建议');
     return;
   }
+  if (typeof JSZip === 'undefined') {
+    showError('JSZip 库未加载，请刷新页面重试');
+    return;
+  }
 
-  // 从 JD 提取职位名
   const jdText = $('jdTextarea')?.value?.trim() || '';
   const jobTitle = extractJobTitle(jdText) || '优化简历';
 
@@ -468,28 +482,51 @@ async function handleDownloadDocx() {
   btn.textContent = '正在生成 DOCX…';
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180000);
+    // 解码 base64 → ArrayBuffer
+    const binaryStr = atob(currentDocxBase64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
 
-    const res = await fetch(`${API_BASE}/api/generate-docx`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        docxBase64: currentApiDocxBase64,
-        optimizations: currentOptimizations,
-        jobTitle: jobTitle,
-      }),
-      signal: controller.signal,
-    });
+    // 用 JSZip 解压 DOCX
+    const zip = await JSZip.loadAsync(bytes.buffer);
 
-    clearTimeout(timeoutId);
+    // 读取 document.xml
+    const docFile = zip.file('word/document.xml');
+    if (!docFile) throw new Error('无法读取 DOCX 内容');
+    let xml = await docFile.async('string');
 
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.message || 'DOCX 生成失败');
+    // 逐条应用优化替换
+    let replaced = 0;
+    for (const opt of currentOptimizations) {
+      const oldText = (opt.old_text || '').trim();
+      const newText = (opt.new_text || '').trim();
+      if (!oldText) continue;
+
+      // 在 XML 中查找原文（可能被 <w:t> 标签分割）
+      const escaped = oldText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // 尝试多种匹配方式
+      if (xml.includes(oldText)) {
+        xml = xml.split(oldText).join(newText);
+        replaced++;
+      } else {
+        // 尝试忽略 XML 标签的模糊匹配
+        const pattern = oldText.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s\\S]{0,30}');
+        try {
+          const re = new RegExp(pattern, 'g');
+          if (re.test(xml)) {
+            xml = xml.replace(re, newText);
+            replaced++;
+          }
+        } catch {}
+      }
     }
 
-    const blob = await res.blob();
+    // 写回 document.xml
+    zip.file('word/document.xml', xml);
+
+    // 生成新 DOCX
+    const newBuffer = await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
+    const blob = new Blob([newBuffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -499,17 +536,17 @@ async function handleDownloadDocx() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    btn.textContent = '已下载!';
+    btn.textContent = `已下载! (${replaced}/${currentOptimizations.length} 条替换)`;
     btn.style.background = 'var(--success)';
     setTimeout(() => {
       btn.textContent = '下载优化简历 (.docx)';
       btn.style.background = '';
       btn.disabled = false;
-    }, 2000);
+    }, 3000);
   } catch (err) {
     btn.disabled = false;
     btn.textContent = '下载优化简历 (.docx)';
-    showError(err.name === 'AbortError' ? 'DOCX 生成超时，请重试' : err.message);
+    showError('DOCX 生成失败: ' + err.message);
   }
 }
 
@@ -700,39 +737,38 @@ function renderExperiences(display) {
 
   const opts = currentResult?.optimizations || [];
 
-  list.innerHTML = exps.map((exp) => {
+  // 经历卡片
+  let html = exps.map((exp) => {
     const skillsHTML = (exp.highlightedSkills || []).map((s) =>
       `<span class="keyword-tag">${escapeHTML(s)}</span>`
     ).join('');
-
-    // 匹配与此经历相关的优化项
-    const expName = (exp.name || '').toLowerCase();
-    const relatedOpts = opts.filter((o) => {
-      const old = (o.old_text || '').toLowerCase();
-      const cmt = (o.comment || '').toLowerCase();
-      return expName && (old.includes(expName) || cmt.includes(expName) || expName.includes(old.slice(0, 15)));
-    }).slice(0, 3);
-
-    let diffHTML = '';
-    if (relatedOpts.length) {
-      diffHTML = `<div class="exp-diff-list">${relatedOpts.map((o) => `
-        <div class="exp-diff-item">
-          <div class="exp-diff-row">
-            <div class="exp-diff-old"><span class="diff-label">原文</span>${escapeHTML(o.old_text || '').slice(0, 200)}</div>
-            <div class="exp-diff-new"><span class="diff-label">优化后</span>${escapeHTML(o.new_text || '').slice(0, 200)}</div>
-          </div>
-          <div class="exp-diff-comment">${escapeHTML(o.comment || '').slice(0, 300)}</div>
-        </div>`).join('')}</div>`;
-    }
-
     return `
       <div class="item-card info">
         <div class="item-card-title">${escapeHTML(exp.name || '')}</div>
         <p>${escapeHTML(exp.optimizedDescription || '')}</p>
         ${skillsHTML ? `<div style="margin-top:8px">${skillsHTML}</div>` : ''}
-        ${diffHTML}
       </div>`;
   }).join('');
+
+  // 全部优化对比
+  if (opts.length) {
+    html += `<h3 style="font-size:14px;font-weight:700;color:var(--accent);margin:20px 0 12px">修改对比（${opts.length} 条）</h3>`;
+    html += opts.slice(0, 15).map((o) => {
+      const oldText = escapeHTML((o.old_text || '').slice(0, 300));
+      const newText = escapeHTML((o.new_text || '').slice(0, 300));
+      const comment = escapeHTML((o.comment || '').slice(0, 400));
+      return `
+        <div class="exp-diff-item">
+          <div class="exp-diff-row">
+            <div class="exp-diff-old"><span class="diff-label">原文</span>${oldText}</div>
+            <div class="exp-diff-new"><span class="diff-label">优化后</span>${newText}</div>
+          </div>
+          ${comment ? `<div class="exp-diff-comment">${comment}</div>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  list.innerHTML = html;
 }
 
 // ---- 模块 4: 面试亮点 ----
