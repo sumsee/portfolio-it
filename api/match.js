@@ -384,7 +384,7 @@ async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey) {
         },
         body: JSON.stringify({
             model: MODEL,
-            max_tokens: 16384,
+            max_tokens: 32768,
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt },
@@ -398,7 +398,13 @@ async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey) {
     }
 
     const data = await response.json();
-    return data.choices[0].message.content;
+    const content = data.choices[0].message.content;
+    const finishReason = data.choices[0].finish_reason;
+    console.log(`[DeepSeek] finish_reason=${finishReason}, response_length=${content.length}`);
+    if (finishReason === 'length') {
+        console.warn('[DeepSeek] 响应因 max_tokens 限制被截断！');
+    }
+    return content;
 }
 
 /**
@@ -450,9 +456,107 @@ function parseJSONWithRecovery(jsonStr) {
     try {
         const cleaned = jsonStr.replace(/[\x00-\x1F\x7F]/g, ' ');
         return new Function('return ' + cleaned)();
-    } catch (_) {
-        throw new Error('JSON 解析失败：已尝试所有容错手段');
+    } catch (_) { /* continue */ }
+
+    // 第 5 次：尝试修复截断的 JSON（max_tokens 不够导致输出被截断）
+    try {
+        const cleaned = jsonStr.replace(/[\x00-\x1F\x7F]/g, ' ');
+        const repaired = repairTruncatedJSON(cleaned);
+        if (repaired) {
+            return JSON.parse(repaired);
+        }
+    } catch (_) { /* continue */ }
+
+    throw new Error('JSON 解析失败：已尝试所有容错手段');
+}
+
+/**
+ * 尝试修复因 max_tokens 不足而被截断的 JSON
+ * 策略：从后往前找最后一个合法位置，补全未闭合的结构
+ */
+function repairTruncatedJSON(str) {
+    // 去掉末尾不完整的片段，逐步回退尝试
+    let s = str.trimEnd();
+
+    // 如果最后一个字符不是 } 或 ] 或 "，说明被截断了
+    if (s.endsWith('}') || s.endsWith(']')) {
+        return null; // 看起来是完整闭合的，不需修复
     }
+
+    // 尝试补全：统计未闭合的括号
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (escape) {
+            escape = false;
+            continue;
+        }
+        if (ch === '\\' && inString) {
+            escape = true;
+            continue;
+        }
+        if (ch === '"') {
+            inString = !inString;
+            continue;
+        }
+        if (inString) continue;
+        if (ch === '{' || ch === '[') depth++;
+        if (ch === '}' || ch === ']') depth--;
+    }
+
+    if (depth <= 0) return null; // 括号已平衡
+
+    // 去掉末尾不完整的键值对（回退到最后一个安全的 , 或 { 或 [）
+    let cutPoint = s.length - 1;
+    while (cutPoint > 0) {
+        const ch = s[cutPoint];
+        if (ch === ',' || ch === '{' || ch === '[') {
+            break;
+        }
+        cutPoint--;
+    }
+
+    if (cutPoint === 0) return null;
+
+    let repaired = s.substring(0, cutPoint);
+    if (s[cutPoint] === ',') {
+        // 去掉逗号后再闭合
+    } else {
+        // 在 { 或 [ 后面，需要补充内容
+        repaired = s.substring(0, cutPoint + 1);
+    }
+
+    // 补全未闭合的结构
+    // 重新计算从 repaired 开始的深度
+    depth = 0;
+    inString = false;
+    escape = false;
+    for (let i = 0; i < repaired.length; i++) {
+        const ch = repaired[i];
+        if (escape) { escape = false; continue; }
+        if (ch === '\\' && inString) { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === '{' || ch === '[') depth++;
+        if (ch === '}' || ch === ']') depth--;
+    }
+
+    // 如果最后一个非空白字符是 : 说明值被截断，补一个空字符串
+    const lastNonSpace = repaired.trimEnd().slice(-1);
+    if (lastNonSpace === ':' || lastNonSpace === ',') {
+        repaired += '""';
+        depth++; // 补了一个字符串值，对应一个未闭合的容器
+    }
+
+    // 闭合所有未闭合的括号
+    for (let i = 0; i < depth; i++) {
+        repaired += '}';
+    }
+
+    return repaired;
 }
 
 /**
@@ -595,7 +699,9 @@ export default async function handler(req, res) {
         try {
             result = extractJSON(rawResponse);
         } catch (parseErr) {
-            console.error('JSON 解析失败，原始响应:', rawResponse);
+            console.error('JSON 解析失败，原始响应长度:', rawResponse.length);
+            console.error('原始响应尾部 500 字符:', rawResponse.slice(-500));
+            console.error('解析错误:', parseErr.message);
             return res.status(502).json({
                 error: 'AI Response Parse Error',
                 message: 'AI 返回内容格式异常，请重试',
