@@ -74,6 +74,15 @@ function bindEvents() {
     });
   }
 
+  // JD 图片文件上传
+  const jdImageInput = $('jdImageInput');
+  if (jdImageInput) {
+    jdImageInput.addEventListener('change', () => {
+      const file = jdImageInput.files[0];
+      if (file) recognizeJdImage(file);
+    });
+  }
+
   // 生成按钮
   const generateBtn = $('generateBtn');
   if (generateBtn) {
@@ -139,9 +148,17 @@ async function extractResumeText(file) {
   }
 }
 
-// ---- JD 粘贴图片自动识别 ----
+// ---- JD 图片识别（粘贴 + 上传共用） ----
 
-async function handleJdPaste(e) {
+function setHint(text, cls) {
+  const hint = $('jdPasteHint');
+  if (hint) {
+    hint.textContent = text;
+    hint.className = 'jd-paste-hint' + (cls ? ' ' + cls : '');
+  }
+}
+
+function handleJdPaste(e) {
   const items = e.clipboardData?.items;
   if (!items) return;
 
@@ -149,43 +166,45 @@ async function handleJdPaste(e) {
     if (item.type.startsWith('image/')) {
       e.preventDefault();
       const file = item.getAsFile();
-      if (file) {
-        const hint = $('jdPasteHint');
-        if (hint) {
-          hint.textContent = '正在识别截图文字...';
-          hint.className = 'jd-paste-hint recognizing';
-        }
-        try {
-          const result = await Tesseract.recognize(file, 'chi_sim+eng');
-          const text = result.data.text?.trim();
-          if (text) {
-            const textarea = $('jdTextarea');
-            if (textarea) {
-              textarea.value = textarea.value.trim()
-                ? textarea.value.trim() + '\n\n' + text
-                : text;
-            }
-            if (hint) {
-              hint.textContent = '识别完成';
-              hint.className = 'jd-paste-hint done';
-              setTimeout(() => { hint.textContent = ''; hint.className = 'jd-paste-hint'; }, 3000);
-            }
-          } else {
-            if (hint) {
-              hint.textContent = '未识别到文字，请重试';
-              hint.className = 'jd-paste-hint';
-            }
-          }
-        } catch (err) {
-          console.error('OCR 失败:', err);
-          if (hint) {
-            hint.textContent = '识别失败，请手动输入';
-            hint.className = 'jd-paste-hint';
-          }
-        }
-      }
+      if (file) recognizeJdImage(file);
       break;
     }
+  }
+}
+
+async function recognizeJdImage(file) {
+  if (typeof Tesseract === 'undefined') {
+    setHint('OCR 库未加载，请刷新页面重试');
+    return;
+  }
+
+  setHint('正在识别截图文字...', 'recognizing');
+
+  try {
+    const result = await Tesseract.recognize(file, 'chi_sim+eng', {
+      logger: (m) => {
+        if (m.status === 'recognizing text' && m.progress != null) {
+          setHint(`正在识别... ${Math.round(m.progress * 100)}%`, 'recognizing');
+        }
+      },
+    });
+
+    const text = (result.data.text || '').trim();
+    if (text) {
+      const textarea = $('jdTextarea');
+      if (textarea) {
+        textarea.value = textarea.value.trim()
+          ? textarea.value.trim() + '\n\n' + text
+          : text;
+      }
+      setHint('识别完成', 'done');
+      setTimeout(() => setHint(''), 3000);
+    } else {
+      setHint('未识别到文字，请确认图片清晰');
+    }
+  } catch (err) {
+    console.error('OCR 失败:', err);
+    setHint('识别失败: ' + (err.message || '请手动输入'));
   }
 }
 

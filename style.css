@@ -214,23 +214,40 @@ body {
 }
 .glass-textarea::placeholder { color: var(--text-muted); }
 
-/* ===== JD 粘贴提示 ===== */
+/* ===== JD 粘贴/上传 ===== */
 .jd-input-wrapper { position: relative; }
+.jd-image-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.jd-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.48);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 180ms ease;
+}
+.jd-upload-btn:hover {
+  border-color: rgba(79,128,255,0.3);
+  color: var(--accent);
+}
 .jd-paste-hint {
-  display: block;
-  margin-top: 6px;
   font-size: 12px;
   color: var(--text-muted);
   font-weight: 500;
   min-height: 18px;
   transition: color 0.2s;
 }
-.jd-paste-hint.recognizing {
-  color: var(--accent);
-}
-.jd-paste-hint.done {
-  color: var(--success);
-}
+.jd-paste-hint.recognizing { color: var(--accent); }
+.jd-paste-hint.done { color: var(--success); }
 
 /* ===== 主按钮 (dark pill) ===== */
 .primary-btn {
