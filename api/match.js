@@ -385,6 +385,7 @@ async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey) {
         body: JSON.stringify({
             model: MODEL,
             max_tokens: 32768,
+            response_format: { type: 'json_object' },
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt },
@@ -398,7 +399,15 @@ async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey) {
     }
 
     const data = await response.json();
+    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+        console.error('[DeepSeek] 响应结构异常:', JSON.stringify(data).slice(0, 500));
+        throw new Error('DeepSeek API 响应结构异常，缺少 choices/message');
+    }
     const content = data.choices[0].message.content;
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+        console.error('[DeepSeek] 返回内容为空, finish_reason:', data.choices[0].finish_reason);
+        throw new Error('DeepSeek API 返回内容为空');
+    }
     const finishReason = data.choices[0].finish_reason;
     console.log(`[DeepSeek] finish_reason=${finishReason}, response_length=${content.length}`);
     if (finishReason === 'length') {
@@ -689,24 +698,33 @@ export default async function handler(req, res) {
             });
         }
 
-        // 4. 调用 AI
+        // 4. 调用 AI（含重试）
         const systemPrompt = buildSystemPrompt();
         const userPrompt = buildUserPrompt(resumeText, jdText);
-        const rawResponse = await callDeepSeekAPI(systemPrompt, userPrompt, apiKey);
-
-        // 5. 解析 JSON（含容错）
+        let rawResponse;
         let result;
-        try {
-            result = extractJSON(rawResponse);
-        } catch (parseErr) {
-            console.error('JSON 解析失败，原始响应长度:', rawResponse.length);
-            console.error('原始响应尾部 500 字符:', rawResponse.slice(-500));
-            console.error('解析错误:', parseErr.message);
-            return res.status(502).json({
-                error: 'AI Response Parse Error',
-                message: 'AI 返回内容格式异常，请重试',
-                errorMessage: parseErr.message,
-            });
+        const maxAttempts = 2;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            rawResponse = await callDeepSeekAPI(systemPrompt, userPrompt, apiKey);
+            try {
+                result = extractJSON(rawResponse);
+                break;
+            } catch (parseErr) {
+                console.error(`[Attempt ${attempt}/${maxAttempts}] JSON 解析失败`);
+                console.error('原始响应前 300 字符:', rawResponse.slice(0, 300));
+                console.error('原始响应尾部 300 字符:', rawResponse.slice(-300));
+                console.error('解析错误:', parseErr.message);
+                if (attempt === maxAttempts) {
+                    return res.status(502).json({
+                        error: 'AI Response Parse Error',
+                        message: 'AI 返回内容格式异常，请重试',
+                        errorMessage: parseErr.message,
+                        rawPreview: rawResponse.slice(0, 200),
+                    });
+                }
+                // 等 1 秒后重试
+                await new Promise(r => setTimeout(r, 1000));
+            }
         }
 
         // 6. 判断返回格式：新格式 {diagnosticReport, display, optimizations} vs 旧格式
