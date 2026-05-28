@@ -5,6 +5,8 @@
 let currentFile = null;
 let currentDocxBase64 = null;
 let currentResult = null;
+let currentOptimizations = [];
+let currentApiDocxBase64 = null;
 let resumeText = '';
 
 // HR 打招呼状态
@@ -163,10 +165,22 @@ async function handleGenerate() {
     }
 
     currentResult = await res.json();
+    currentOptimizations = currentResult.optimizations || [];
+    currentApiDocxBase64 = currentResult.docxBase64 || null;
+
     renderAll(currentResult);
 
     $('loadingContainer').style.display = 'none';
     $('resultArea').style.display = '';
+
+    // 显示下载按钮（有优化建议且是 DOCX 模式）
+    const toolbar = $('resultToolbar');
+    const dlBtn = $('downloadDocxBtn');
+    if (toolbar && dlBtn && currentOptimizations.length > 0 && currentApiDocxBase64) {
+      toolbar.style.display = '';
+      dlBtn.style.display = '';
+      dlBtn.addEventListener('click', handleDownloadDocx);
+    }
 
     // 触发 stagger 动画
     document.querySelectorAll('.stagger-card').forEach((el, i) => {
@@ -177,6 +191,92 @@ async function handleGenerate() {
     $('uploadSection').style.display = '';
     showError(err.name === 'AbortError' ? '请求超时，请重试' : err.message);
   }
+}
+
+// ---- 下载优化简历 DOCX ----
+
+async function handleDownloadDocx() {
+  const btn = $('downloadDocxBtn');
+  if (!btn) return;
+
+  if (!currentApiDocxBase64) {
+    showError('缺少 DOCX 数据，请重新上传并生成');
+    return;
+  }
+  if (!currentOptimizations.length) {
+    showError('没有可应用的优化建议');
+    return;
+  }
+
+  // 从 JD 提取职位名
+  const jdText = $('jdTextarea')?.value?.trim() || '';
+  const jobTitle = extractJobTitle(jdText) || '优化简历';
+
+  btn.disabled = true;
+  btn.textContent = '正在生成 DOCX…';
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
+
+    const res = await fetch('/api/generate-docx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        docxBase64: currentApiDocxBase64,
+        optimizations: currentOptimizations,
+        jobTitle: jobTitle,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.message || 'DOCX 生成失败');
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `resume_optimized_${sanitizeFileName(jobTitle)}.docx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    btn.textContent = '已下载!';
+    btn.style.background = 'var(--success)';
+    setTimeout(() => {
+      btn.textContent = '下载优化简历 (.docx)';
+      btn.style.background = '';
+      btn.disabled = false;
+    }, 2000);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = '下载优化简历 (.docx)';
+    showError(err.name === 'AbortError' ? 'DOCX 生成超时，请重试' : err.message);
+  }
+}
+
+function extractJobTitle(jdText) {
+  const patterns = [
+    /(?:职位|岗位|招聘)[：:\s]*[【\[]?([^】\]\n，,]{2,20})[】\]]?/,
+    /(?:诚聘|急招|招聘)[：:\s]*[【\[]?([^】\]\n，,]{2,20})[】\]]?/,
+    /(?:安全|网络|运维|开发|测试|数据|前端|后端|全栈|架构|产品|项目经理)[^，,\n]{0,8}(?:工程师|分析师|专家|经理|专员|主管|负责人|实习生|岗)/,
+    /([一-鿿]{2,15}(?:工程师|分析师|专家|经理|专员|主管|负责人|实习生|岗))/,
+  ];
+  for (const re of patterns) {
+    const m = jdText.match(re);
+    if (m) return m[1] || m[0];
+  }
+  return '';
+}
+
+function sanitizeFileName(name) {
+  return name.replace(/[\\/:*?"<>|]/g, '_').substring(0, 50).trim() || 'resume';
 }
 
 // ---- 错误处理 ----

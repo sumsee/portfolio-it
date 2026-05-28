@@ -281,6 +281,15 @@ body {
   flex-wrap: wrap;
 }
 
+/* ===== 操作工具栏 ===== */
+.result-toolbar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 /* ===== 标签按钮 (pill) ===== */
 .tag-btn {
   display: inline-flex;
