@@ -459,50 +459,19 @@ async function handleGenerate() {
   }
 }
 
-// ---- 下载优化简历 DOCX（客户端 JSZip + 批注） ----
+// ---- 下载优化简历 DOCX（Word 原生批注） ----
 
 function escapeXml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function buildSummaryXml(opts) {
-  let runs = '';
-  // 标题
-  runs += '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>优化修改说明</w:t></w:r></w:p>';
-  // 每条优化
-  for (let i = 0; i < opts.length; i++) {
-    const o = opts[i];
-    const oldText = (o.old_text || '').trim().slice(0, 200);
-    const newText = (o.new_text || '').trim().slice(0, 200);
-    const comment = (o.comment || '').replace(/\n/g, ' ').trim().slice(0, 300);
-    if (!oldText) continue;
-    runs += `<w:p><w:r><w:t>第${i + 1}条</w:t></w:r></w:p>`;
-    runs += `<w:p><w:r><w:rPr><w:color w:val="CC0000"/></w:rPr><w:t>原文：${escapeXml(oldText)}</w:t></w:r></w:p>`;
-    runs += `<w:p><w:r><w:rPr><w:color w:val="008000"/></w:rPr><w:t>优化后：${escapeXml(newText)}</w:t></w:r></w:p>`;
-    if (comment) {
-      runs += `<w:p><w:r><w:t>修改原因：${escapeXml(comment)}</w:t></w:r></w:p>`;
-    }
-    runs += '<w:p/>'; // 空行
-  }
-  return runs;
 }
 
 async function handleDownloadDocx() {
   const btn = $('downloadDocxBtn');
   if (!btn) return;
 
-  if (!currentDocxBase64) {
-    showError('缺少 DOCX 数据，请重新上传');
-    return;
-  }
-  if (!currentOptimizations.length) {
-    showError('没有可应用的优化建议');
-    return;
-  }
-  if (typeof JSZip === 'undefined') {
-    showError('JSZip 库未加载，请刷新页面重试');
-    return;
-  }
+  if (!currentDocxBase64) { showError('缺少 DOCX 数据，请重新上传'); return; }
+  if (!currentOptimizations.length) { showError('没有可应用的优化建议'); return; }
+  if (typeof JSZip === 'undefined') { showError('JSZip 库未加载，请刷新页面重试'); return; }
 
   const jdText = $('jdTextarea')?.value?.trim() || '';
   const jobTitle = extractJobTitle(jdText) || '优化简历';
@@ -511,7 +480,6 @@ async function handleDownloadDocx() {
   btn.textContent = '正在生成 DOCX…';
 
   try {
-    // 解码 base64 → ArrayBuffer
     const binaryStr = atob(currentDocxBase64);
     const bytes = new Uint8Array(binaryStr.length);
     for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
@@ -521,55 +489,83 @@ async function handleDownloadDocx() {
     if (!docFile) throw new Error('无法读取 DOCX 内容');
     let xml = await docFile.async('string');
 
-    // 把 XML 中 <w:p> 段落内的所有 <w:t> 文本拼接，匹配后替换
-    let replaced = 0;
-    const paraRegex = /<w:p\b[^>]*>([\s\S]*?)<\/w:p>/g;
-    let match;
+    // ---- 1. 替换文本 + 插入批注标记 ----
+    let commentId = 0;
+    const comments = []; // {id, oldText, newText, comment}
 
-    while ((match = paraRegex.exec(xml)) !== null) {
-      const paraFull = match[0];
-      const paraInner = match[1];
+    for (const opt of currentOptimizations) {
+      const oldText = (opt.old_text || '').trim();
+      const newText = (opt.new_text || '').trim();
+      const comment = (opt.comment || '').trim();
+      if (!oldText || oldText.length < 6 || !newText) continue;
 
-      // 提取段落内所有纯文本
-      const textParts = [];
-      const tRegex = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
-      let tm;
-      while ((tm = tRegex.exec(paraInner)) !== null) {
-        textParts.push(tm[1]);
-      }
-      const paraText = textParts.join('');
+      // 在 XML 中找原文所在的 <w:t> 标签
+      const tTagRegex = new RegExp(
+        '(<w:t[^>]*>)(' + oldText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')(</w:t>)'
+      );
+      const tMatch = xml.match(tTagRegex);
 
-      // 尝试匹配每条优化
-      for (const opt of currentOptimizations) {
-        const oldText = (opt.old_text || '').trim();
-        const newText = (opt.new_text || '').trim();
-        if (!oldText || oldText.length < 6) continue;
+      if (tMatch) {
+        const id = commentId++;
+        // 替换文本 + 包裹批注标记
+        const replacement =
+          `<w:commentRangeStart w:id="${id}"/>` +
+          tMatch[1] + escapeXml(newText) + tMatch[3] +
+          `<w:commentRangeEnd w:id="${id}"/>` +
+          `<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="${id}"/></w:r>`;
 
-        if (paraText.includes(oldText)) {
-          // 找到了！替换第一个 <w:t> 的部分文本，其余清空
-          const firstT = paraInner.match(/<w:t[^>]*>[\s\S]*?<\/w:t>/);
-          if (firstT) {
-            const newXml = paraFull.replace(firstT[0], firstT[0].replace(/<w:t[^>]*>([\s\S]*?)<\/w:t>/, `<w:t xml:space="preserve">${escapeXml(newText)}</w:t>`));
-            // 清空段落内其他 <w:t>
-            const cleaned = newXml.replace(/(<w:t[^>]*>)([\s\S]*?)(<\/w:t>)/g, (m, open, content, close, offset) => {
-              if (m === newXml.match(/<w:t[^>]*>[\s\S]*?<\/w:t>/)?.[0]) return m;
-              return open + close;
-            });
-            xml = xml.replace(paraFull, cleaned);
-            replaced++;
-            break;
-          }
-        }
+        xml = xml.replace(tMatch[0], replacement);
+        comments.push({ id, oldText, newText, comment });
       }
     }
 
-    // 在文档末尾追加"优化修改说明"
-    const summaryXml = buildSummaryXml(currentOptimizations);
-    xml = xml.replace(/<\/w:body>/, summaryXml + '</w:body>');
+    // ---- 2. 生成 comments.xml ----
+    let commentsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    commentsXml += '<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">';
+    for (const c of comments) {
+      const body = [
+        `【原文】${c.oldText}`,
+        `【优化后】${c.newText}`,
+        c.comment ? `【修改原因】${c.comment}` : ''
+      ].filter(Boolean).join('\n');
+      commentsXml += `<w:comment w:id="${c.id}" w:author="AI简历优化" w:date="${new Date().toISOString().slice(0,10)}">`;
+      commentsXml += `<w:p><w:r><w:t>${escapeXml(body)}</w:t></w:r></w:p>`;
+      commentsXml += '</w:comment>';
+    }
+    commentsXml += '</w:comments>';
 
+    zip.file('word/comments.xml', commentsXml);
+
+    // ---- 3. 注册 comments part ----
+    // [Content_Types].xml 添加 Override
+    const ctFile = zip.file('[Content_Types].xml');
+    if (ctFile) {
+      let ct = await ctFile.async('string');
+      if (!ct.includes('comments.xml')) {
+        ct = ct.replace('</Types>',
+          '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>' +
+          '</Types>');
+        zip.file('[Content_Types].xml', ct);
+      }
+    }
+
+    // word/_rels/document.xml.rels 添加关系
+    const relsFile = zip.file('word/_rels/document.xml.rels');
+    if (relsFile) {
+      let rels = await relsFile.async('string');
+      if (!rels.includes('comments.xml')) {
+        const nextId = 'rId' + (rels.match(/rId\d+/g)?.length + 1 || 100);
+        rels = rels.replace('</Relationships>',
+          `<Relationship Id="${nextId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/>` +
+          '</Relationships>');
+        zip.file('word/_rels/document.xml.rels', rels);
+      }
+    }
+
+    // 写回 document.xml
     zip.file('word/document.xml', xml);
 
-    // 生成新 DOCX
+    // ---- 4. 生成并下载 ----
     const newBuffer = await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
     const blob = new Blob([newBuffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
     const url = URL.createObjectURL(blob);
@@ -581,14 +577,11 @@ async function handleDownloadDocx() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    btn.textContent = `已下载! (${replaced}/${currentOptimizations.length} 条替换)`;
+    btn.textContent = `已下载! (${comments.length} 条批注)`;
     btn.style.background = 'var(--success)';
-    setTimeout(() => {
-      btn.textContent = '下载优化简历 (.docx)';
-      btn.style.background = '';
-      btn.disabled = false;
-    }, 3000);
+    setTimeout(() => { btn.textContent = '下载优化简历 (.docx)'; btn.style.background = ''; btn.disabled = false; }, 3000);
   } catch (err) {
+    console.error('DOCX 生成失败:', err);
     btn.disabled = false;
     btn.textContent = '下载优化简历 (.docx)';
     showError('DOCX 生成失败: ' + err.message);
