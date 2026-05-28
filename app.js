@@ -206,9 +206,8 @@ function parseAIResponse(raw) {
     return JSON.parse(repaired);
   } catch {}
 
-  console.error('JSON 解析失败，原始响应前500字符:', raw.slice(0, 500));
-  console.error('JSON 解析失败，原始响应后500字符:', raw.slice(-500));
-  throw new Error('AI 返回格式异常，请重试');
+  console.error('JSON 解析失败，原始响应:', raw.slice(0, 500));
+  throw new Error('AI 返回格式异常: ' + raw.slice(0, 150));
 }
 
 // ---- DOM ----
