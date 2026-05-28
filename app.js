@@ -106,6 +106,18 @@ let greetingData = null;
 let greetingTab = 'short';
 let greetingStyle = '干练简洁';
 
+// ---- 文本清理（防止 OCR/粘贴引入多余控制字符） ----
+function cleanText(s) {
+  if (!s) return '';
+  return s
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ')  // 控制字符 → 空格
+    .replace(/\t/g, ' ')                                    // tab → 空格
+    .replace(/\r\n/g, '\n')                                 // CRLF → LF
+    .replace(/\n{3,}/g, '\n\n')                             // 连续3+换行 → 2个
+    .replace(/ {2,}/g, ' ')                                 // 连续空格 → 1个
+    .trim();
+}
+
 // ---- DeepSeek API 直接调用 ----
 
 async function callDeepSeek(messages, maxTokens = 32768) {
@@ -410,7 +422,7 @@ async function handleGenerate() {
   try {
     const raw = await callDeepSeek([
       { role: 'system', content: MATCH_SYSTEM_PROMPT },
-      { role: 'user', content: `## 候选人简历（原始文本）\n\n${resumeText}\n\n## 目标岗位 JD\n\n${jdText}\n\n## 任务\n\n请根据以上简历和 JD，生成包含 diagnosticReport、display 和 optimizations 三个字段的完整 JSON。\n关键要求：optimizations 必须覆盖简历中每一个段落，至少 8-15 条；old_text 必须与原文逐字匹配。` },
+      { role: 'user', content: `## 候选人简历（原始文本）\n\n${cleanText(resumeText)}\n\n## 目标岗位 JD\n\n${cleanText(jdText)}\n\n## 任务\n\n请根据以上简历和 JD，生成包含 diagnosticReport、display 和 optimizations 三个字段的完整 JSON。\n关键要求：optimizations 必须覆盖简历中每一个段落，至少 8-15 条；old_text 必须与原文逐字匹配。` },
     ]);
 
     currentResult = parseAIResponse(raw);
@@ -857,7 +869,7 @@ async function handleGenerateGreeting() {
   try {
     const raw = await callDeepSeek([
       { role: 'system', content: GREETING_PROMPT },
-      { role: 'user', content: `【简历内容】\n${resumeText || '简历已上传'}\n\n【JD 内容】\n${jdText}\n\n【指定风格】\n${greetingStyle}` },
+      { role: 'user', content: `【简历内容】\n${cleanText(resumeText) || '简历已上传'}\n\n【JD 内容】\n${cleanText(jdText)}\n\n【指定风格】\n${greetingStyle}` },
     ], 4096);
 
     greetingData = parseAIResponse(raw);
