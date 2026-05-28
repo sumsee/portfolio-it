@@ -3,7 +3,7 @@
 
 // ---- API 后端地址 ----
 // GitHub Pages 前端 → Vercel 后端 API
-const API_BASE = 'https://portfolio-j091xd1ol-barry-s-projects3.vercel.app';
+const API_BASE = 'https://portfolio-poo386cwa-barry-s-projects3.vercel.app';
 
 // ---- 状态 ----
 let currentFile = null;
