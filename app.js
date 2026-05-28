@@ -151,7 +151,15 @@ function parseAIResponse(raw) {
   try {
     const cleaned = jsonStr.replace(
       /"(?:[^"\\]|\\.)*"/g,
-      (m) => m.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t')
+      (m) => m
+        .replace(/[\x00-\x08]/g, ' ')
+        .replace(/\x0B/g, ' ')
+        .replace(/\x0C/g, ' ')
+        .replace(/[\x0E-\x1F]/g, ' ')
+        .replace(/\x7F/g, ' ')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r')
+        .replace(/\t/g, '\\t')
     );
     return JSON.parse(cleaned);
   } catch {}
