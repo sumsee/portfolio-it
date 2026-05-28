@@ -144,50 +144,29 @@ function parseAIResponse(raw) {
     jsonStr = (first !== -1 && last > first) ? raw.slice(first, last + 1) : raw;
   }
 
-  // 逐字符清理：只在 JSON 字符串内部转义控制字符
-  function cleanJson(s) {
-    let result = '';
-    let inStr = false;
-    let escaped = false;
-    for (let i = 0; i < s.length; i++) {
-      const ch = s[i];
-      if (escaped) {
-        result += ch;
-        escaped = false;
-        continue;
-      }
-      if (ch === '\\' && inStr) {
-        result += ch;
-        escaped = true;
-        continue;
-      }
-      if (ch === '"') {
-        inStr = !inStr;
-        result += ch;
-        continue;
-      }
-      if (inStr) {
-        // 在字符串内：转义控制字符
-        const code = ch.charCodeAt(0);
-        if (code === 0x0A) { result += '\\n'; continue; }
-        if (code === 0x0D) { result += '\\r'; continue; }
-        if (code === 0x09) { result += '\\t'; continue; }
-        if (code < 0x20 || code === 0x7F) { result += ' '; continue; }
-      }
-      result += ch;
-    }
-    return result;
-  }
-
   // 第1次：直接解析
   try { return JSON.parse(jsonStr); } catch {}
 
-  // 第2次：清理控制字符后解析
-  try { return JSON.parse(cleanJson(jsonStr)); } catch {}
-
-  // 第3次：修复截断 JSON
+  // 第2次：用正则匹配所有 JSON 字符串值，内部的控制字符全部转义
   try {
-    let repaired = cleanJson(jsonStr).trimEnd();
+    const cleaned = jsonStr.replace(
+      /"(?:[^"\\]|\\.)*"/g,
+      (m) => m.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t')
+    );
+    return JSON.parse(cleaned);
+  } catch {}
+
+  // 第3次：更激进——全部控制字符替换为空格
+  try {
+    return JSON.parse(jsonStr.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' '));
+  } catch {}
+
+  // 第4次：修复截断 JSON
+  try {
+    let repaired = jsonStr
+      .replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t')
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ')
+      .trimEnd();
     if (!repaired.endsWith('}') && !repaired.endsWith(']')) {
       let depth = 0, inS = false, esc = false;
       for (const ch of repaired) {
