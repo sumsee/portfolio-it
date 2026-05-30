@@ -3,7 +3,7 @@
 
 const DEEPSEEK_API = 'https://api.deepseek.com/v1/chat/completions';
 const DEEPSEEK_KEY = 'sk-88d41f720f3f45259766450b686fd7b0';
-const API_BASE = 'https://portfolio-noywjxs2s-barry-s-projects3.vercel.app';
+const API_BASE = 'https://portfolio-4al9d639s-barry-s-projects3.vercel.app';
 
 // ---- 简历分析 System Prompt ----
 const MATCH_SYSTEM_PROMPT = `你是一位资深 HRBP + 招聘经理 + 简历优化专家。
