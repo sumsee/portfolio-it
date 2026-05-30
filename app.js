@@ -631,7 +631,9 @@ async function handleDownloadDocx() {
 
 async function handleGenerateTemplate() {
   const btn = $('templateBtn');
-  if (!btn) return;
+  if (!btn) { console.error('templateBtn not found'); return; }
+
+  console.log('handleGenerateTemplate called', { hasTemplate: !!templateBase64, hasResult: !!currentResult, hasJSZip: typeof JSZip !== 'undefined' });
 
   if (!templateBase64) { showError('请先上传简历模板 .docx 文件'); return; }
   if (!currentResult) { showError('请先完成简历分析'); return; }
@@ -759,11 +761,11 @@ async function handleGenerateTemplate() {
 
     btn.textContent = '已下载!';
     btn.style.background = 'var(--success)';
-    setTimeout(() => { btn.textContent = '生成模板简历'; btn.style.background = ''; btn.disabled = false; }, 3000);
+    setTimeout(() => { btn.textContent = '下载优化简历（模板）'; btn.style.background = ''; btn.disabled = false; }, 3000);
   } catch (err) {
     console.error('模板生成失败:', err);
     btn.disabled = false;
-    btn.textContent = '生成模板简历';
+    btn.textContent = '下载优化简历（模板）';
     showError('生成失败: ' + err.message);
   }
 }
