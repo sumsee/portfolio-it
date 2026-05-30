@@ -518,23 +518,46 @@ body {
   margin: 2px 4px 2px 0;
 }
 
-/* 经历修改说明 */
-.exp-change-note {
-  margin-top: 12px;
-  padding: 10px 12px;
-  background: rgba(79,128,255,0.04);
-  border-radius: 8px;
-  border-left: 3px solid var(--accent);
+/* 经历双版本展示 */
+.exp-section {
+  margin-bottom: 12px;
 }
-.exp-change-line {
-  font-size: 12px;
-  line-height: 1.7;
-  color: var(--text-muted);
-  margin-bottom: 2px;
-}
-.exp-change-label {
+.exp-section-label {
+  display: inline-block;
+  font-size: 11px;
   font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding: 2px 8px;
+  background: rgba(79,128,255,0.08);
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+.exp-full-text {
+  font-size: 13px;
+  line-height: 1.8;
   color: var(--text-main);
+  white-space: pre-wrap;
+}
+.exp-concise-text {
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text-main);
+  white-space: pre-wrap;
+  padding: 10px 12px;
+  background: rgba(34,197,94,0.04);
+  border-radius: 8px;
+  border-left: 3px solid var(--success);
+}
+.exp-match-note {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  padding: 8px 10px;
+  background: rgba(13,19,32,0.03);
+  border-radius: 6px;
 }
 
 /* ===== 自我介绍 ===== */

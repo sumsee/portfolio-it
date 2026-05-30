@@ -57,7 +57,7 @@ const MATCH_SYSTEM_PROMPT = `你是一位资深 HRBP + 招聘经理 + 简历优�
     "visionPlanningMatch": {"conclusion": "...", "evidence": [...]},
     "statusFitMatch": {"conclusion": "...", "evidence": [...]},
     "qualityCharacterMatch": {"conclusion": "...", "evidence": [...]},
-    "experienceShowcase": [{"name":"...","optimizedDescription":"...","highlightedSkills":["..."],"matchedJDRequirements":["..."],"improvementSuggestions":["..."]}],
+    "experienceShowcase": [{"name":"岗位名称 · 公司","fullVersion":"2~4条要点，每条以维度标签开头（加粗标签+STAR结构+强动词+量化+JD原词）","conciseVersion":"整合为2条，每条带小标题（用·连接两个维度关键词）","matchNote":"小字说明：为什么这样写+承接了JD哪些维度+关键词原样落地说明+量化数据为推测范围"}],
     "interviewHighlights": ["亮点1","亮点2","亮点3"],
     "missingInfoSuggestions": ["建议1","建议2"],
     "finalSelfIntroduction": "200-350字自我介绍",
@@ -73,7 +73,28 @@ const MATCH_SYSTEM_PROMPT = `你是一位资深 HRBP + 招聘经理 + 简历优�
 - display 完整展示页
 - optimizations 覆盖每个段落，至少8-15条
 - old_text 必须与原文逐字精确匹配
-- 全面重写不是表面润色`;
+- 全面重写不是表面润色
+
+## experienceShowcase 经历重写规则（最高优先级）
+
+对简历中每段经历，执行以下流程：
+
+### 核心铁律
+1. **岗位名锚定，原文不参照**：仅读取每段经历的「岗位名称」，完全不参照原有描述，内容根据 JD + 该岗位真实工作场景从零编写。
+2. **JD驱动全维度覆盖**：把JD拆成能力维度清单，确保每个核心维度都有经历承接。匹配度最高的岗位承担最重内容。
+3. **JD关键词原样保留**：JD写什么词，经历里就用什么词，禁止同义替换，确保ATS精准命中。
+4. **量化成果**：每条尽量带数字（提升X%、节省X小时、服务X万用户、管理X人团队等），推测数据标注【推测范围】。
+
+### 写作规范
+- 每条要点内隐含STAR结构，突出"行动+成果"
+- 强动词化：负责→主导，做了→设计，尝试→引入
+- JD关键词原样嵌入，结合上下文自然表达，严禁堆砌
+
+### 输出结构（每段经历严格按此）
+- **name**：「岗位名称 · 公司」
+- **fullVersion**：2~4条要点，每条以**加粗维度标签**开头（如「**配置管理和变更管理（A/R）**：主导设备的配置管理和变更管理...」），内嵌强动词、量化数据与JD原词
+- **conciseVersion**：整合为2条，每条带小标题（用「·」连接两个维度，如「**网络规划与建设实施 · 配置变更管理**：...」），浓缩核心信息与关键数据
+- **matchNote**：一条小字说明，点明为什么这样写、承接了JD哪些维度、JD关键词原样落地说明、量化数据为【推测范围】待核对`;
 
 // ---- HR 打招呼 Prompt ----
 const GREETING_PROMPT = `你是一个专业的求职顾问。根据以下规则生成 HR 打招呼话术。
@@ -772,54 +793,50 @@ function renderExperiences(display) {
   const exps = display?.experienceShowcase;
   if (!exps?.length) { list.innerHTML = '<p style="color:var(--text-muted)">无经历数据</p>'; return; }
 
-  const opts = currentResult?.optimizations || [];
+  list.innerHTML = exps.map((exp) => {
+    // 新格式：fullVersion + conciseVersion + matchNote
+    const full = exp.fullVersion || '';
+    const concise = exp.conciseVersion || '';
+    const note = exp.matchNote || '';
 
-  let html = exps.map((exp) => {
+    // 兼容旧格式
+    const desc = exp.optimizedDescription || '';
     const skillsHTML = (exp.highlightedSkills || []).map((s) =>
       `<span class="keyword-tag">${escapeHTML(s)}</span>`
     ).join('');
 
-    // 找到与这段经历最相关的优化项
-    const expDesc = (exp.optimizedDescription || '').slice(0, 30);
-    const related = opts.find((o) => {
-      const cmt = (o.comment || '');
-      return cmt.includes(expDesc) || cmt.includes(exp.name || '') ||
-        (o.new_text || '').includes(expDesc);
-    }) || opts.shift();
+    if (full) {
+      // 新格式渲染
+      let html = `<div class="item-card info">`;
+      html += `<div class="item-card-title">${escapeHTML(exp.name || '')}</div>`;
 
-    let changeHTML = '';
-    if (related) {
-      const oldShort = escapeHTML((related.old_text || '').slice(0, 120));
-      const benefit = extractBenefit(related.comment || '');
-      changeHTML = `
-        <div class="exp-change-note">
-          <div class="exp-change-line"><span class="exp-change-label">改了什么：</span>${oldShort} → 优化版</div>
-          <div class="exp-change-line"><span class="exp-change-label">改的好处：</span>${escapeHTML(benefit)}</div>
+      // 完整版
+      html += `<div class="exp-section"><span class="exp-section-label">完整版</span>`;
+      html += `<div class="exp-full-text">${escapeHTML(full)}</div></div>`;
+
+      // 精简版
+      if (concise) {
+        html += `<div class="exp-section"><span class="exp-section-label">精简版</span>`;
+        html += `<div class="exp-concise-text">${escapeHTML(concise)}</div></div>`;
+      }
+
+      // 小字说明
+      if (note) {
+        html += `<div class="exp-match-note">${escapeHTML(note)}</div>`;
+      }
+
+      html += `</div>`;
+      return html;
+    } else {
+      // 兼容旧格式
+      return `
+        <div class="item-card info">
+          <div class="item-card-title">${escapeHTML(exp.name || '')}</div>
+          <p>${escapeHTML(desc)}</p>
+          ${skillsHTML ? `<div style="margin-top:8px">${skillsHTML}</div>` : ''}
         </div>`;
     }
-
-    return `
-      <div class="item-card info">
-        <div class="item-card-title">${escapeHTML(exp.name || '')}</div>
-        <p>${escapeHTML(exp.optimizedDescription || '')}</p>
-        ${skillsHTML ? `<div style="margin-top:8px">${skillsHTML}</div>` : ''}
-        ${changeHTML}
-      </div>`;
   }).join('');
-
-  list.innerHTML = html;
-}
-
-// 从 comment 中提取修改原因/好处
-function extractBenefit(comment) {
-  // 尝试找"优化逻辑"后面的内容
-  const logicMatch = comment.match(/优化逻辑[】\]】]?\s*[\n•]+([\s\S]*?)(?=【匹配度|$)/);
-  if (logicMatch) return logicMatch[1].trim().slice(0, 150);
-  // 尝试找"修改类型"和关键描述
-  const typeMatch = comment.match(/【修改类型】([\s\S]*?)(?=【|$)/);
-  if (typeMatch) return typeMatch[1].trim().slice(0, 150);
-  // 取前150字符
-  return comment.replace(/\n/g, ' ').slice(0, 150);
 }
 
 // ---- 模块 4: 面试亮点 ----
