@@ -3,6 +3,7 @@
 
 const DEEPSEEK_API = 'https://api.deepseek.com/v1/chat/completions';
 const DEEPSEEK_KEY = 'sk-88d41f720f3f45259766450b686fd7b0';
+const API_BASE = 'https://portfolio-ifblu6tbn-barry-s-projects3.vercel.app';
 
 // ---- 简历分析 System Prompt ----
 const MATCH_SYSTEM_PROMPT = `你是一位资深 HRBP + 招聘经理 + 简历优化专家。
@@ -121,6 +122,7 @@ let currentResult = null;
 let currentOptimizations = [];
 let currentApiDocxBase64 = null;
 let resumeText = '';
+let templateBase64 = null;
 
 // HR 打招呼状态
 let greetingData = null;
@@ -302,6 +304,26 @@ function bindEvents() {
     generateBtn.addEventListener('click', handleGenerate);
   }
 
+  // 模板文件上传
+  const templateInput = $('templateInput');
+  const templateZone = $('templateZone');
+  if (templateZone && templateInput) {
+    templateZone.addEventListener('click', () => templateInput.click());
+    templateInput.addEventListener('change', () => {
+      const file = templateInput.files[0];
+      if (file) {
+        file.arrayBuffer().then((buf) => {
+          const bytes = new Uint8Array(buf);
+          let binary = '';
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          templateBase64 = btoa(binary);
+          const hint = $('templateHint');
+          if (hint) { hint.textContent = `已选择: ${file.name}`; hint.style.color = 'var(--success)'; }
+        });
+      }
+    });
+  }
+
   // 弹窗关闭
   const modalOverlay = $('modalOverlay');
   const modalClose = $('modalClose');
@@ -456,15 +478,13 @@ async function handleGenerate() {
     $('loadingContainer').style.display = 'none';
     $('resultArea').style.display = '';
 
-    // 显示下载按钮
-    if (currentOptimizations.length > 0 && currentDocxBase64) {
-      const toolbar = $('resultToolbar');
-      const dlBtn = $('downloadDocxBtn');
-      if (toolbar && dlBtn) {
-        toolbar.style.display = '';
-        dlBtn.style.display = '';
-        dlBtn.onclick = handleDownloadDocx;
-      }
+    // 显示模板简历按钮
+    const toolbar = $('resultToolbar');
+    const templateBtn = $('templateBtn');
+    if (toolbar && templateBtn) {
+      toolbar.style.display = '';
+      templateBtn.style.display = '';
+      templateBtn.onclick = handleGenerateTemplate;
     }
 
     // 触发 stagger 动画
@@ -605,6 +625,68 @@ async function handleDownloadDocx() {
     btn.disabled = false;
     btn.textContent = '下载优化简历 (.docx)';
     showError('DOCX 生成失败: ' + err.message);
+  }
+}
+
+// ---- 生成模板简历 ----
+
+async function handleGenerateTemplate() {
+  const btn = $('templateBtn');
+  if (!btn) return;
+
+  if (!templateBase64) {
+    showError('请先上传简历模板 .docx 文件');
+    return;
+  }
+  if (!currentResult) {
+    showError('请先完成简历分析');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '正在生成…';
+
+  try {
+    const jdText = $('jdTextarea')?.value?.trim() || '';
+
+    const res = await fetch(`${API_BASE}/api/generate-template-resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        templateBase64: templateBase64,
+        resumeText: resumeText,
+        result: currentResult,
+        jdText: jdText,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || '生成失败');
+    }
+
+    const data = await res.json();
+    if (!data.docxBase64) throw new Error('返回数据为空');
+
+    // 下载
+    const bytes = Uint8Array.from(atob(data.docxBase64), c => c.charCodeAt(0));
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '简历_优化版.docx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    btn.textContent = '已下载!';
+    btn.style.background = 'var(--success)';
+    setTimeout(() => { btn.textContent = '生成模板简历'; btn.style.background = ''; btn.disabled = false; }, 3000);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = '生成模板简历';
+    showError('生成失败: ' + err.message);
   }
 }
 

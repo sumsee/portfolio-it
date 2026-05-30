@@ -5,7 +5,8 @@
   "rewrites": [
     { "source": "/api/match", "destination": "/api/match" },
     { "source": "/api/generate-docx", "destination": "/api/generate-docx" },
-    { "source": "/api/generate-greeting", "destination": "/api/generate-greeting" }
+    { "source": "/api/generate-greeting", "destination": "/api/generate-greeting" },
+    { "source": "/api/generate-template-resume", "destination": "/api/generate-template-resume" }
   ],
   "headers": [
     {
@@ -27,6 +28,10 @@
       "memory": 1024
     },
     "api/generate-greeting.js": {
+      "maxDuration": 180,
+      "memory": 1024
+    },
+    "api/generate-template-resume.py": {
       "maxDuration": 180,
       "memory": 1024
     }

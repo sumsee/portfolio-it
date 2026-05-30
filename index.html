@@ -46,6 +46,14 @@
           </div>
         </div>
 
+        <div class="field-group">
+          <label class="field-label">简历模板（可选，不上传则使用默认模板）</label>
+          <div class="upload-zone" id="templateZone" style="padding:16px">
+            <input type="file" id="templateInput" accept=".docx" hidden>
+            <p class="upload-hint" id="templateHint" style="font-size:13px">点击上传简历模板 .docx 文件</p>
+          </div>
+        </div>
+
         <div class="error-box" id="errorBox" style="display:none"></div>
 
         <button class="primary-btn" id="generateBtn">开始智能分析</button>
@@ -66,7 +74,7 @@
 
       <!-- 操作按钮栏 -->
       <div class="result-toolbar" id="resultToolbar" style="display:none">
-        <button class="primary-btn" id="downloadDocxBtn" style="display:none">下载优化简历 (.docx)</button>
+        <button class="primary-btn" id="templateBtn">生成模板简历</button>
       </div>
 
       <!-- 模块 1: 简历诊断报告 -->
