@@ -3,6 +3,7 @@
 
 const DEEPSEEK_API = 'https://api.deepseek.com/v1/chat/completions';
 const DEEPSEEK_KEY = 'sk-88d41f720f3f45259766450b686fd7b0';
+const API_BASE = 'https://portfolio-biogul1ul-barry-s-projects3.vercel.app';
 
 // ---- 简历分析 System Prompt ----
 const MATCH_SYSTEM_PROMPT = `你是一位资深 HRBP + 招聘经理 + 简历优化专家。
@@ -121,7 +122,6 @@ let currentResult = null;
 let currentOptimizations = [];
 let currentApiDocxBase64 = null;
 let resumeText = '';
-let templateBase64 = null;
 
 // HR 打招呼状态
 let greetingData = null;
@@ -238,23 +238,6 @@ const $ = (id) => document.getElementById(id);
 // ---- 初始化 ----
 function init() {
   bindEvents();
-  loadTemplate();
-}
-
-// 自动加载模板文件
-async function loadTemplate() {
-  try {
-    const res = await fetch('resume-template.docx');
-    if (!res.ok) throw new Error(`加载失败 ${res.status}`);
-    const buf = await res.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    templateBase64 = btoa(binary);
-    console.log('模板加载成功', buf.byteLength, 'bytes');
-  } catch (err) {
-    console.error('模板加载失败:', err);
-  }
 }
 
 if (document.readyState === 'loading') {
@@ -625,129 +608,37 @@ async function handleDownloadDocx() {
   }
 }
 
-// ---- 生成模板简历（纯前端 JSZip） ----
+// ---- 下载优化简历（模板） ----
 
 async function handleGenerateTemplate() {
   const btn = $('templateBtn');
-  if (!btn) { console.error('templateBtn not found'); return; }
-
-  console.log('handleGenerateTemplate called', { hasTemplate: !!templateBase64, hasResult: !!currentResult, hasJSZip: typeof JSZip !== 'undefined' });
-
-  if (!templateBase64) { showError('请先上传简历模板 .docx 文件'); return; }
+  if (!btn) return;
   if (!currentResult) { showError('请先完成简历分析'); return; }
-  if (typeof JSZip === 'undefined') { showError('JSZip 未加载，请刷新页面'); return; }
 
   btn.disabled = true;
   btn.textContent = '正在生成…';
 
   try {
-    // 解码模板
-    const bytes = Uint8Array.from(atob(templateBase64), c => c.charCodeAt(0));
-    const zip = await JSZip.loadAsync(bytes.buffer);
-    const docFile = zip.file('word/document.xml');
-    if (!docFile) throw new Error('无法读取模板内容');
-    let xml = await docFile.async('string');
-
-    // 提取数据
-    const info = parseResumeText(resumeText);
-    const display = currentResult.display || currentResult;
-    const diagnostic = currentResult.diagnosticReport || {};
-    const experiences = display.experienceShowcase || [];
-
-    // ---- P0: 姓名 ----
-    if (info.name) {
-      xml = xml.replace(/>姓名</, '>' + escXml(info.name) + '<');
-    }
-
-    // ---- P1: 基本信息 ----
-    if (info.phone) xml = xml.replace(/>xxxxx</, '>' + escXml(info.phone) + '<');
-    if (info.email) xml = xml.replace(/>xxxxxx</, '>' + escXml(info.email) + '<');
-
-    // ---- P3: 教育信息 ----
-    const edu = info.education || {};
-    if (edu.school) xml = xml.replace(/>xxxxxxxxxxx大学</, '>' + escXml(edu.school) + '<');
-    if (edu.major) xml = xml.replace(/>xxxxxxxx专业</, '>' + escXml(edu.major) + '<');
-
-    // ---- P4: 主修课程 ----
-    if (edu.courses) xml = xml.replace(/>xxxxxxxx</, '>' + escXml(edu.courses) + '<');
-
-    // ---- 经历替换（实习/项目/校园） ----
-    for (const exp of experiences) {
-      const name = exp.name || '';
-      const full = exp.fullVersion || '';
-      if (!full) continue;
-
-      // 查找模板中对应的占位段落并替换
-      const bullets = full.split('\n').filter(l => l.trim().length > 5);
-      for (const bullet of bullets) {
-        const clean = bullet.replace(/^[\-•\d.\s]+/, '').trim();
-        if (clean.length < 10) continue;
-        // 在 XML 中找 "xxxx：" 格式的占位符替换
-        const placeholderMatch = xml.match(/>xxxx[：:]([^<]*)</);
-        if (placeholderMatch) {
-          const oldFull = placeholderMatch[0];
-          const newText = escXml(clean);
-          xml = xml.replace(oldFull, '>' + newText + '<');
-        }
-      }
-    }
-
-    // ---- 技能板块 ----
-    const skills = info.skills || {};
-    if (skills.certificates) xml = xml.replace(/>xxxxx</, '>' + escXml(skills.certificates) + '<');
-    if (skills.technical) xml = xml.replace(/>xxxxxx。/, '>' + escXml(skills.technical) + '。');
-    if (skills.selfEval) xml = xml.replace(/>xxxxxx。/, '>' + escXml(skills.selfEval) + '。');
-    // 兴趣爱好
-    const hobbies = skills.hobbies || '球类运动、写作';
-    xml = xml.replace(/>xxxxxx。/, '>' + escXml(hobbies) + '。');
-
-    // ---- 量化标红：在 XML 中找含成果数字的 <w:t> 标签 ----
-    xml = xml.replace(/<w:t[^>]*>([^<]*?)<\/w:t>/g, (match, text) => {
-      if (/提升|降低|节省|缩短|优化|管理|服务|处理|交付/.test(text) && /\d+/.test(text)) {
-        return match.replace(/<w:t[^>]*>/, '<w:t xml:space="preserve">').replace(
-          /<w:rPr>/,
-          '<w:rPr><w:color w:val="FF0000"/>'
-        ).replace(
-          /<\/w:t>/,
-          '</w:t>'
-        );
-      }
-      return match;
+    const res = await fetch(`${API_BASE}/api/generate-template-resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        resumeText: resumeText,
+        result: currentResult,
+      }),
     });
 
-    // ---- 末尾附加区 ----
-    let appendix = '';
-    appendix += '<w:p><w:r><w:rPr><w:color w:val="808080"/></w:rPr><w:t>【以下为 AI 推断补充，供参考，请自行核实后决定是否采用】</w:t></w:r></w:p>';
-    const missing = display.missingInfoSuggestions || [];
-    for (const item of missing) {
-      appendix += `<w:p><w:r><w:rPr><w:color w:val="808080"/></w:rPr><w:t>• ${escXml(item)}</w:t></w:r></w:p>`;
-    }
-    appendix += '<w:p/>';
-    appendix += '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>优化后简历打分 · 匹配度计算（100 分制）</w:t></w:r></w:p>';
-
-    if (diagnostic.dimensions) {
-      const dimMap = { jdMatch: 'JD 匹配度', quantification: '量化成果', structure: '结构与逻辑', language: '语言专业度', ats: 'ATS 友好度' };
-      for (const [key, label] of Object.entries(dimMap)) {
-        const d = diagnostic.dimensions[key] || {};
-        appendix += `<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>${label}：${d.score || 0}/${d.maxScore || 0}</w:t></w:r>`;
-        if (d.detail) appendix += `<w:r><w:t>  ${escXml(d.detail)}</w:t></w:r>`;
-        appendix += '</w:p>';
-      }
-      appendix += `<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>综合得分：${diagnostic.overallScore || 0}/100</w:t></w:r></w:p>`;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || `请求失败 (${res.status})`);
     }
 
-    appendix += '<w:p/>';
-    appendix += '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>优化亮点：</w:t></w:r></w:p>';
-    for (const h of ['🔑 关键词优化', '📊 量化成果', '🎯 技能匹配', '✨ 措辞优化', '📐 结构调整', '🤖 ATS 优化']) {
-      appendix += `<w:p><w:r><w:t>  ${h}</w:t></w:r></w:p>`;
-    }
+    const data = await res.json();
+    if (!data.docxBase64) throw new Error('返回数据为空');
 
-    xml = xml.replace(/<\/w:body>/, appendix + '</w:body>');
-
-    // 写回并下载
-    zip.file('word/document.xml', xml);
-    const newBuffer = await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
-    const blob = new Blob([newBuffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    // 下载
+    const bytes = Uint8Array.from(atob(data.docxBase64), c => c.charCodeAt(0));
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -761,60 +652,10 @@ async function handleGenerateTemplate() {
     btn.style.background = 'var(--success)';
     setTimeout(() => { btn.textContent = '下载优化简历（模板）'; btn.style.background = ''; btn.disabled = false; }, 3000);
   } catch (err) {
-    console.error('模板生成失败:', err);
     btn.disabled = false;
     btn.textContent = '下载优化简历（模板）';
     showError('生成失败: ' + err.message);
   }
-}
-
-function parseResumeText(text) {
-  const info = {};
-  const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
-  if (!lines.length) return info;
-
-  info.name = lines[0].replace(/^[姓\s名：:]+/, '').trim();
-
-  const early = lines.slice(0, 10).join('\n');
-  const phoneM = early.match(/1[3-9]\d{9}/);
-  if (phoneM) info.phone = phoneM[0];
-  const emailM = early.match(/[\w.\-]+@[\w.\-]+\.\w+/);
-  if (emailM) info.email = emailM[0];
-
-  const edu = {};
-  for (const line of lines) {
-    if (/大学|学院|学校|本科|硕士/.test(line)) {
-      const years = line.match(/20\d{2}/g) || [];
-      if (years.length >= 2) { edu.start_year = years[0]; edu.end_year = years[1]; }
-      const schoolM = line.match(/([一-鿿]{2,15}(?:大学|学院|学校))/);
-      if (schoolM) edu.school = schoolM[1];
-      const majorM = line.match(/([一-鿿]{2,15})(?:专业|系)/);
-      if (majorM) edu.major = majorM[1] + '专业';
-      const gpaM = line.match(/GPA[：:]\s*(\d+\.?\d*)/i);
-      if (gpaM) edu.gpa = gpaM[1];
-      break;
-    }
-  }
-
-  for (const line of lines) {
-    if (/主修课程|核心课程/.test(line)) edu.courses = line.replace(/^.*?[：:]\s*/, '');
-  }
-  info.education = edu;
-
-  const skills = {};
-  for (const line of lines) {
-    if (/证书|CET/.test(line)) skills.certificates = line.replace(/^.*?[：:]\s*/, '');
-    if (/专业技能|技术栈/.test(line)) skills.technical = line.replace(/^.*?[：:]\s*/, '').replace(/。/g, '');
-    if (/自我评价/.test(line)) skills.selfEval = line.replace(/^.*?[：:]\s*/, '').replace(/。/g, '');
-    if (/爱好|兴趣/.test(line)) skills.hobbies = line.replace(/^.*?[：:]\s*/, '').replace(/。/g, '');
-  }
-  info.skills = skills;
-
-  return info;
-}
-
-function escXml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function extractJobTitle(jdText) {

@@ -1,18 +1,22 @@
 """
-Vercel Python Serverless Function — 模板化简历生成
+Vercel Python Serverless Function — 模板化简历生成（python-docx）
 POST /api/generate-template-resume
-Body: { "templateBase64": "...", "resumeText": "...", "result": {...}, "jdText": "..." }
+Body: { "resumeText": "...", "result": {...} }
 Response: { "docxBase64": "...", "message": "..." }
 """
 
 import base64
 import json
+import os
 import re
 from io import BytesIO
 from http.server import BaseHTTPRequestHandler
 
 from docx import Document
 from docx.shared import RGBColor
+
+
+TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), '..', '简历模板.docx')
 
 
 def add_cors(handler):
@@ -34,27 +38,22 @@ class handler(BaseHTTPRequestHandler):
             body = self.rfile.read(content_length) if content_length > 0 else b''
             data = json.loads(body)
 
-            template_b64 = data.get('templateBase64', '')
             resume_text = data.get('resumeText', '')
             result = data.get('result', {})
-            jd_text = data.get('jdText', '')
 
-            if not template_b64:
-                self._json_error(400, '缺少模板文件')
+            # 加载模板母版
+            if not os.path.exists(TEMPLATE_PATH):
+                self._json_error(500, f'模板文件不存在: {TEMPLATE_PATH}')
                 return
 
-            # 解码模板
-            template_bytes = base64.b64decode(template_b64)
-            doc = Document(BytesIO(template_bytes))
-
-            # 提取数据
+            doc = Document(TEMPLATE_PATH)
             display = result.get('display', {})
             diagnostic = result.get('diagnosticReport', {})
 
-            # 填充模板
-            fill_resume(doc, resume_text, display, diagnostic, jd_text)
+            # 按 skill 规则填充
+            fill_resume(doc, resume_text, display, diagnostic)
 
-            # 保存到内存
+            # 保存
             output = BytesIO()
             doc.save(output)
             output.seek(0)
@@ -64,7 +63,7 @@ class handler(BaseHTTPRequestHandler):
             add_cors(self)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({'docxBase64': out_b64, 'message': '生成成功'}).encode())
+            self.wfile.write(json.dumps({'docxBase64': out_b64}).encode())
 
         except Exception as e:
             import traceback
@@ -79,142 +78,135 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({'message': message}).encode())
 
 
-# ========== 核心填充逻辑 ==========
+# ============================================================
+#  按 skill 规则填充六大板块
+# ============================================================
 
-def fill_resume(doc, resume_text, display, diagnostic, jd_text):
-    paragraphs = doc.paragraphs
-    resume_info = parse_resume_text(resume_text)
+def fill_resume(doc, resume_text, display, diagnostic):
+    ps = doc.paragraphs
+    info = parse_resume(resume_text)
     experiences = display.get('experienceShowcase', [])
 
-    # P0: 姓名
-    name = resume_info.get('name', '')
-    if name and len(paragraphs) > 0:
-        replace_run_text(paragraphs[0], '姓名', name)
+    # ---- P0: 姓名 ----
+    if info.get('name') and len(ps) > 0:
+        rt(ps[0], '姓名', info['name'])
 
-    # P1: 基本信息
-    if len(paragraphs) > 1:
-        p1 = paragraphs[1]
-        replace_run_text(p1, 'xxxx', resume_info.get('political', ''))
-        replace_run_text(p1, 'xxxxx', resume_info.get('phone', ''))
-        replace_run_text(p1, 'xxxxxx', resume_info.get('email', ''))
+    # ---- P1: 基本信息 ----
+    if len(ps) > 1:
+        rt(ps[1], 'xxxx', info.get('political', ''))
+        rt(ps[1], 'xxxxx', info.get('phone', ''))
+        rt(ps[1], 'xxxxxx', info.get('email', ''))
 
-    # P3: 教育信息
-    edu = resume_info.get('education', {})
-    if len(paragraphs) > 3:
-        p3 = paragraphs[3]
-        replace_run_text(p3, 'xxxxxxxxxxx大学', edu.get('school', ''))
-        replace_run_text(p3, 'xxxxxxxx专业', edu.get('major', ''))
-        if edu.get('start_year'):
-            replace_nth_run_text(p3, 'xx', edu['start_year'], 1)
-        if edu.get('end_year'):
-            replace_nth_run_text(p3, 'xx', edu['end_year'], 3)
+    # ---- P3: 教育信息 ----
+    edu = info.get('edu', {})
+    if len(ps) > 3:
+        p = ps[3]
+        rt(p, 'xxxxxxxxxxx大学', edu.get('school', ''))
+        rt(p, 'xxxxxxxx专业', edu.get('major', ''))
         if edu.get('gpa'):
-            replace_nth_run_text(p3, 'xx', edu['gpa'], 4)
+            rt_nth(p, 'xx', edu['gpa'], 4)
         if edu.get('rank'):
-            replace_nth_run_text(p3, 'xx', edu['rank'], 5)
+            rt_nth(p, 'xx', edu['rank'], 5)
 
-    # P4: 主修课程
-    if len(paragraphs) > 4:
+    # ---- P4: 主修课程（按 JD 优化，允许 AI 推断补全） ----
+    if len(ps) > 4:
         courses = edu.get('courses', '') or '待补充'
-        replace_run_text(paragraphs[4], 'xxxxxxxx', courses)
+        rt(ps[4], 'xxxxxxxx', courses)
 
-    # P5: 荣誉奖项
-    if len(paragraphs) > 5:
-        honors = resume_info.get('honors', '')
-        if honors:
-            replace_paragraph_runs(paragraphs[5], f'荣誉奖项：{honors}')
+    # ---- P5: 荣誉奖项 ----
+    if len(ps) > 5 and info.get('honors'):
+        set_para(ps[5], f'荣誉奖项：{info["honors"]}')
 
-    # P6-P9: 实习经历
-    intern_exp = find_experience(experiences, '实习')
-    if intern_exp and len(paragraphs) > 9:
-        if intern_exp.get('titleLine'):
-            replace_paragraph_runs(paragraphs[7], intern_exp['titleLine'])
-        bullets = extract_bullets(intern_exp.get('fullVersion', ''))
+    # ---- P7-P9: 实习经历（标题行原文，要点用优化版） ----
+    intern = find_exp(experiences, ['实习', '工作'])
+    if intern and len(ps) > 9:
+        if intern.get('titleLine'):
+            set_para(ps[7], intern['titleLine'])
+        bullets = get_bullets(intern.get('fullVersion', ''))
         if len(bullets) > 0:
-            fill_bullet_paragraph(paragraphs[8], bullets[0])
+            fill_bullet(ps[8], bullets[0])
         if len(bullets) > 1:
-            fill_bullet_paragraph(paragraphs[9], bullets[1])
+            fill_bullet(ps[9], bullets[1])
 
-    # P10-P13: 项目经历
-    proj_exp = find_experience(experiences, '项目')
-    if proj_exp and len(paragraphs) > 13:
-        if proj_exp.get('titleLine'):
-            replace_paragraph_runs(paragraphs[11], proj_exp['titleLine'])
-        bullets = extract_bullets(proj_exp.get('fullVersion', ''))
+    # ---- P11-P13: 项目经历 ----
+    proj = find_exp(experiences, ['项目', '开发'])
+    if proj and len(ps) > 13:
+        if proj.get('titleLine'):
+            set_para(ps[11], proj['titleLine'])
+        bullets = get_bullets(proj.get('fullVersion', ''))
         if len(bullets) > 0:
-            fill_bullet_paragraph(paragraphs[12], bullets[0])
+            fill_bullet(ps[12], bullets[0])
         if len(bullets) > 1:
-            fill_bullet_paragraph(paragraphs[13], bullets[1])
+            fill_bullet(ps[13], bullets[1])
 
-    # P14-P16: 校园经历
-    campus_exp = find_experience(experiences, '校园')
-    if campus_exp and len(paragraphs) > 16:
-        if campus_exp.get('titleLine'):
-            replace_paragraph_runs(paragraphs[15], campus_exp['titleLine'])
-        bullets = extract_bullets(campus_exp.get('fullVersion', ''))
+    # ---- P15-P16: 校园经历 ----
+    campus = find_exp(experiences, ['校园', '社团', '组织', '学生'])
+    if campus and len(ps) > 16:
+        if campus.get('titleLine'):
+            set_para(ps[15], campus['titleLine'])
+        bullets = get_bullets(campus.get('fullVersion', ''))
         if len(bullets) > 0:
-            fill_bullet_paragraph(paragraphs[16], bullets[0])
+            fill_bullet(ps[16], bullets[0])
 
-    # P18-P22: 技能/优势
-    skills_info = resume_info.get('skills', {})
+    # ---- P18-P22: 技能/优势 ----
+    skills = info.get('skills', {})
+    if len(ps) > 18 and skills.get('certs'):
+        rt(ps[18], 'xxxxx', skills['certs'])
+    if len(ps) > 19 and skills.get('comps'):
+        rt(ps[19], 'xxxxx', skills['comps'])
+    if len(ps) > 20:
+        rt(ps[20], 'xxxxxx。', skills.get('tech', '') or '待补充')
+    if len(ps) > 21:
+        rt(ps[21], 'xxxxxx。', skills.get('self', '') or '待补充')
+    if len(ps) > 22:
+        hobbies = skills.get('hobbies', '') or '球类运动、写作'
+        rt(ps[22], 'xxxxxx。', hobbies)
 
-    if len(paragraphs) > 18 and skills_info.get('certificates'):
-        replace_run_text(paragraphs[18], 'xxxxx', skills_info['certificates'])
+    # ---- 量化标红 ----
+    red_quantification(doc)
 
-    if len(paragraphs) > 19 and skills_info.get('competitions'):
-        replace_run_text(paragraphs[19], 'xxxxx', skills_info['competitions'])
-
-    if len(paragraphs) > 20:
-        tech = skills_info.get('technical', '') or '待补充'
-        replace_run_text(paragraphs[20], 'xxxxxx。', tech)
-
-    if len(paragraphs) > 21:
-        self_eval = skills_info.get('selfEval', '') or '待补充'
-        replace_run_text(paragraphs[21], 'xxxxxx。', self_eval)
-
-    if len(paragraphs) > 22:
-        hobbies = skills_info.get('hobbies', '') or '球类运动、写作'
-        replace_run_text(paragraphs[22], 'xxxxxx。', hobbies)
-
-    # 量化标红
-    highlight_quantification(doc)
-
-    # 末尾附加区
+    # ---- 末尾附加区 ----
     append_ai_section(doc, display, diagnostic)
 
 
-# ========== 工具函数 ==========
+# ============================================================
+#  工具函数
+# ============================================================
 
-def replace_run_text(paragraph, old_text, new_text):
+def rt(paragraph, old, new):
+    """替换段落中第一个包含 old 的 run 的文本"""
     for run in paragraph.runs:
-        if old_text in run.text:
-            run.text = run.text.replace(old_text, new_text)
+        if old in run.text:
+            run.text = run.text.replace(old, new)
             return True
     return False
 
 
-def replace_nth_run_text(paragraph, old_text, new_text, n):
-    count = 0
+def rt_nth(paragraph, old, new, n):
+    """替换第 n 个匹配"""
+    c = 0
     for run in paragraph.runs:
-        if old_text in run.text:
-            count += 1
-            if count == n:
-                run.text = run.text.replace(old_text, new_text, 1)
+        if old in run.text:
+            c += 1
+            if c == n:
+                run.text = run.text.replace(old, new, 1)
                 return True
     return False
 
 
-def replace_paragraph_runs(paragraph, new_text):
+def set_para(paragraph, text):
+    """清空段落所有 run，用第一个 run 写入新文本"""
     if not paragraph.runs:
         return
-    paragraph.runs[0].text = new_text
-    for run in paragraph.runs[1:]:
-        run.text = ''
+    paragraph.runs[0].text = text
+    for r in paragraph.runs[1:]:
+        r.text = ''
 
 
-def fill_bullet_paragraph(paragraph, bullet_text):
-    if '：' in bullet_text:
-        parts = bullet_text.split('：', 1)
+def fill_bullet(paragraph, text):
+    """填充要点段落：小标题加粗 + 内容"""
+    if '：' in text:
+        parts = text.split('：', 1)
         label = parts[0].strip('*').strip()
         content = parts[1].strip()
         if paragraph.runs:
@@ -228,10 +220,29 @@ def fill_bullet_paragraph(paragraph, bullet_text):
                 paragraph.runs[2].bold = False
     else:
         if paragraph.runs:
-            paragraph.runs[0].text = bullet_text
+            paragraph.runs[0].text = text
 
 
-def parse_resume_text(text):
+def find_exp(experiences, keywords):
+    """按关键词查找经历"""
+    for exp in experiences:
+        name = exp.get('name', '')
+        for kw in keywords:
+            if kw in name:
+                return exp
+    return experiences[0] if experiences else None
+
+
+def get_bullets(full_version):
+    """从 fullVersion 提取要点列表"""
+    if not full_version:
+        return []
+    lines = [re.sub(r'^[\-•\d.\s]+', '', l).strip() for l in full_version.split('\n')]
+    return [l for l in lines if len(l) > 5]
+
+
+def parse_resume(text):
+    """从简历文本提取结构化信息"""
     info = {}
     lines = [l.strip() for l in text.strip().split('\n') if l.strip()]
     if not lines:
@@ -239,54 +250,46 @@ def parse_resume_text(text):
 
     info['name'] = re.sub(r'^[姓\s名：:]+', '', lines[0]).strip()
 
-    for line in lines[:8]:
-        phone_m = re.search(r'1[3-9]\d{9}', line)
-        if phone_m:
-            info['phone'] = phone_m.group()
-        email_m = re.search(r'[\w.\-]+@[\w.\-]+\.\w+', line)
-        if email_m:
-            info['email'] = email_m.group()
-        if '党员' in line or '团员' in line or '群众' in line:
-            info['political'] = re.search(r'(?:党员|团员|群众)', line).group()
+    early = '\n'.join(lines[:10])
+    m = re.search(r'1[3-9]\d{9}', early)
+    if m: info['phone'] = m.group()
+    m = re.search(r'[\w.\-]+@[\w.\-]+\.\w+', early)
+    if m: info['email'] = m.group()
+    m = re.search(r'(党员|团员|群众)', early)
+    if m: info['political'] = m.group()
 
     edu = {}
     for line in lines:
-        if any(kw in line for kw in ['大学', '学院', '学校', '本科', '硕士', '博士']):
-            years = re.findall(r'20\d{2}', line)
-            if len(years) >= 2:
-                edu['start_year'] = years[0]
-                edu['end_year'] = years[1]
-            major_m = re.search(r'([一-鿿]{2,15})(?:专业|系)', line)
-            if major_m:
-                edu['major'] = major_m.group(1) + '专业'
-            gpa_m = re.search(r'GPA[：:]\s*(\d+\.?\d*)', line, re.IGNORECASE)
-            if gpa_m:
-                edu['gpa'] = gpa_m.group(1)
-            rank_m = re.search(r'(?:top|前)\s*(\d+)%', line, re.IGNORECASE)
-            if rank_m:
-                edu['rank'] = rank_m.group(1)
-            school_m = re.search(r'([一-鿿]{2,15}(?:大学|学院|学校))', line)
-            if school_m:
-                edu['school'] = school_m.group(1)
+        if re.search(r'大学|学院|学校|本科|硕士', line):
+            sm = re.search(r'([一-鿿]{2,20}(?:大学|学院|学校))', line)
+            if sm: edu['school'] = sm.group(1)
+            mm = re.search(r'([一-鿿]{2,15})专业', line)
+            if mm: edu['major'] = mm.group(1) + '专业'
+            gm = re.search(r'GPA[：:]\s*(\d+\.?\d*)', line, re.I)
+            if gm: edu['gpa'] = gm.group(1)
+            rm = re.search(r'(?:top|前)\s*(\d+)%', line, re.I)
+            if rm: edu['rank'] = rm.group(1)
             break
-    info['education'] = edu
 
     for line in lines:
         if '主修课程' in line or '核心课程' in line:
             edu['courses'] = re.sub(r'^.*?[：:]\s*', '', line)
+    info['edu'] = edu
+
+    for line in lines:
         if '荣誉' in line or '奖学金' in line or '奖项' in line:
             info['honors'] = re.sub(r'^.*?[：:]\s*', '', line)
 
     skills = {}
     for line in lines:
         if '证书' in line or 'CET' in line:
-            skills['certificates'] = re.sub(r'^.*?[：:]\s*', '', line)
+            skills['certs'] = re.sub(r'^.*?[：:]\s*', '', line)
         if '比赛' in line or '竞赛' in line:
-            skills['competitions'] = re.sub(r'^.*?[：:]\s*', '', line)
+            skills['comps'] = re.sub(r'^.*?[：:]\s*', '', line)
         if '专业技能' in line or '技术栈' in line:
-            skills['technical'] = re.sub(r'^.*?[：:]\s*', '', line).rstrip('。.')
-        if '自我评价' in line or '自我介绍' in line:
-            skills['selfEval'] = re.sub(r'^.*?[：:]\s*', '', line).rstrip('。.')
+            skills['tech'] = re.sub(r'^.*?[：:]\s*', '', line).rstrip('。.')
+        if '自我评价' in line:
+            skills['self'] = re.sub(r'^.*?[：:]\s*', '', line).rstrip('。.')
         if '爱好' in line or '兴趣' in line:
             skills['hobbies'] = re.sub(r'^.*?[：:]\s*', '', line).rstrip('。.')
     info['skills'] = skills
@@ -294,58 +297,40 @@ def parse_resume_text(text):
     return info
 
 
-def find_experience(experiences, keyword):
-    for exp in experiences:
-        if keyword in exp.get('name', ''):
-            return exp
-    return experiences[0] if experiences else None
-
-
-def extract_bullets(full_version):
-    if not full_version:
-        return []
-    lines = re.split(r'\n', full_version)
-    return [re.sub(r'^[\-•\d.]+\s*', '', l).strip() for l in lines if len(l.strip()) > 5]
-
-
-def highlight_quantification(doc):
+def red_quantification(doc):
     """成果型量化数据标红"""
     for para in doc.paragraphs:
         for run in para.runs:
-            text = run.text or ''
-            if not text:
+            t = run.text or ''
+            if not t:
                 continue
-            # 跳过标题行
+            # 跳过大标题
             if run.bold and run.font.size and run.font.size > 140000:
                 continue
-            # 匹配成果型数字
-            if re.search(r'(提升|降低|减少|增加|节省|缩短|优化|管理|服务|覆盖|处理|交付|支撑|从.{1,8}至)\s*(?:约?\s*)?\d+', text):
-                run.font.color = RGBColor(0xFF, 0x00, 0x00)
-            elif re.search(r'\d+%', text) and not re.search(r'(GPA|top|前)\s*\d', text):
+            if re.search(r'(提升|降低|节省|缩短|优化|管理|服务|处理|交付|支撑|从.{1,6}至)\s*(?:约?\s*)?\d+', t):
                 run.font.color = RGBColor(0xFF, 0x00, 0x00)
 
 
 def append_ai_section(doc, display, diagnostic):
-    """末尾附加区"""
+    """末尾附加区：AI 推断参考 + 匹配度评分"""
     doc.add_paragraph('')
 
-    # 灰色分隔标题
-    p_sep = doc.add_paragraph('')
-    run_sep = p_sep.add_run('【以下为 AI 推断补充，供参考，请自行核实后决定是否采用】')
-    run_sep.font.color = RGBColor(0x80, 0x80, 0x80)
+    # 灰色分隔
+    p = doc.add_paragraph('')
+    r = p.add_run('【以下为 AI 推断补充，供参考，请自行核实后决定是否采用】')
+    r.font.color = RGBColor(0x80, 0x80, 0x80)
 
-    missing = display.get('missingInfoSuggestions', [])
-    for item in missing:
+    for item in display.get('missingInfoSuggestions', []):
         p = doc.add_paragraph('')
-        run = p.add_run(f'• {item}')
-        run.font.color = RGBColor(0x80, 0x80, 0x80)
+        r = p.add_run(f'• {item}')
+        r.font.color = RGBColor(0x80, 0x80, 0x80)
 
     doc.add_paragraph('')
 
     # 匹配度评分
-    p_title = doc.add_paragraph('')
-    run_t = p_title.add_run('优化后简历打分 · 匹配度计算（100 分制）')
-    run_t.bold = True
+    p = doc.add_paragraph('')
+    r = p.add_run('优化后简历打分 · 匹配度计算（100 分制）')
+    r.bold = True
 
     if diagnostic:
         dims = diagnostic.get('dimensions', {})
@@ -353,17 +338,17 @@ def append_ai_section(doc, display, diagnostic):
                            ('structure', '结构与逻辑'), ('language', '语言专业度'), ('ats', 'ATS 友好度')]:
             d = dims.get(key, {})
             p = doc.add_paragraph('')
-            run = p.add_run(f'{label}：{d.get("score", 0)}/{d.get("maxScore", 0)}')
-            run.bold = True
+            r = p.add_run(f'{label}：{d.get("score", 0)}/{d.get("maxScore", 0)}')
+            r.bold = True
             if d.get('detail'):
                 p.add_run(f'  {d["detail"]}')
 
-        p_ov = doc.add_paragraph('')
-        run_ov = p_ov.add_run(f'综合得分：{diagnostic.get("overallScore", 0)}/100')
-        run_ov.bold = True
+        p = doc.add_paragraph('')
+        r = p.add_run(f'综合得分：{diagnostic.get("overallScore", 0)}/100')
+        r.bold = True
 
     doc.add_paragraph('')
-    p_hl = doc.add_paragraph('')
-    p_hl.add_run('优化亮点：').bold = True
+    p = doc.add_paragraph('')
+    p.add_run('优化亮点：').bold = True
     for h in ['🔑 关键词优化', '📊 量化成果', '🎯 技能匹配', '✨ 措辞优化', '📐 结构调整', '🤖 ATS 优化']:
         doc.add_paragraph(f'  {h}')
