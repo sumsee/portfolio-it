@@ -316,7 +316,7 @@ def red_quantification(doc):
             if run.bold and run.font.size and run.font.size > 140000:
                 continue
             if re.search(r'(提升|降低|节省|缩短|优化|管理|服务|处理|交付|支撑|从.{1,6}至)\s*(?:约?\s*)?\d+', t):
-                run.font.color = RGBColor(0xFF, 0x00, 0x00)
+                run.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
 
 
 def append_ai_section(doc, display, diagnostic):
@@ -326,12 +326,12 @@ def append_ai_section(doc, display, diagnostic):
     # 灰色分隔
     p = doc.add_paragraph('')
     r = p.add_run('【以下为 AI 推断补充，供参考，请自行核实后决定是否采用】')
-    r.font.color = RGBColor(0x80, 0x80, 0x80)
+    r.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
 
     for item in display.get('missingInfoSuggestions', []):
         p = doc.add_paragraph('')
         r = p.add_run(f'• {item}')
-        r.font.color = RGBColor(0x80, 0x80, 0x80)
+        r.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
 
     doc.add_paragraph('')
 
