@@ -16,7 +16,7 @@ from docx import Document
 from docx.shared import RGBColor
 
 
-TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), '..', '简历模板.docx')
+TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), '..', 'resume-template.docx')
 
 
 def add_cors(handler):
@@ -28,9 +28,17 @@ def add_cors(handler):
 class handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
-        self.send_response(204)
+        self.send_response(200)
         add_cors(self)
+        self.send_header('Content-Length', '0')
         self.end_headers()
+
+    def do_GET(self):
+        self.send_response(405)
+        add_cors(self)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({'message': 'Use POST'}).encode())
 
     def do_POST(self):
         try:
