@@ -652,6 +652,7 @@ async function handleGenerateTemplate() {
     btn.style.background = 'var(--success)';
     setTimeout(() => { btn.textContent = '下载优化简历（模板）'; btn.style.background = ''; btn.disabled = false; }, 3000);
   } catch (err) {
+    console.error('模板简历生成失败:', err);
     btn.disabled = false;
     btn.textContent = '下载优化简历（模板）';
     showError('生成失败: ' + err.message);
