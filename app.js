@@ -238,6 +238,23 @@ const $ = (id) => document.getElementById(id);
 // ---- 初始化 ----
 function init() {
   bindEvents();
+  loadTemplate();
+}
+
+// 自动加载模板文件
+async function loadTemplate() {
+  try {
+    const res = await fetch('resume-template.docx');
+    if (!res.ok) throw new Error(`加载失败 ${res.status}`);
+    const buf = await res.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    templateBase64 = btoa(binary);
+    console.log('模板加载成功', buf.byteLength, 'bytes');
+  } catch (err) {
+    console.error('模板加载失败:', err);
+  }
 }
 
 if (document.readyState === 'loading') {
@@ -303,25 +320,6 @@ function bindEvents() {
     generateBtn.addEventListener('click', handleGenerate);
   }
 
-  // 模板文件上传
-  const templateInput = $('templateInput');
-  const templateZone = $('templateZone');
-  if (templateZone && templateInput) {
-    templateZone.addEventListener('click', () => templateInput.click());
-    templateInput.addEventListener('change', () => {
-      const file = templateInput.files[0];
-      if (file) {
-        file.arrayBuffer().then((buf) => {
-          const bytes = new Uint8Array(buf);
-          let binary = '';
-          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-          templateBase64 = btoa(binary);
-          const hint = $('templateHint');
-          if (hint) { hint.textContent = `已选择: ${file.name}`; hint.style.color = 'var(--success)'; }
-        });
-      }
-    });
-  }
 
   // 弹窗关闭
   const modalOverlay = $('modalOverlay');
